@@ -423,37 +423,37 @@ struct IssueOverlayView: View {
     let info: IssueOverlayInfo
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 5) {
             if let category = info.category {
                 Text(category.uppercased())
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Color.red)
             }
             Text(info.message)
-                .font(.system(size: 11))
+                .font(.system(size: 13))
                 .foregroundStyle(Color.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if let suggestion = info.suggestion, !suggestion.isEmpty {
-                HStack(spacing: 3) {
+                HStack(spacing: 4) {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 9))
+                        .font(.system(size: 11))
                     Text(suggestion)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                 }
                 .foregroundStyle(Color.accentColor)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .frame(width: 280, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(width: 320, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: 6)
                 .fill(Color(.windowBackgroundColor))
                 .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: 6)
                 .strokeBorder(Color.red.opacity(0.5), lineWidth: 1)
         }
     }
