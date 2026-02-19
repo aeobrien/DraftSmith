@@ -11,6 +11,8 @@ struct PDFWorkspaceView: View {
     @State private var outlinePageIndex: Int?
     @State private var selectedAnnotationID: UUID?
     @State private var issueUnderlines: [IssueLocation] = []
+    @State private var issueOverlayInfo: IssueOverlayInfo?
+    @State private var showIssueOverlay: Bool = true
     @State private var showFileImporter = false
     @State private var showUnsavedChangesAlert = false
 
@@ -32,6 +34,8 @@ struct PDFWorkspaceView: View {
                     outlinePageIndex: $outlinePageIndex,
                     selectedAnnotationID: $selectedAnnotationID,
                     issueUnderlines: $issueUnderlines,
+                    issueOverlayInfo: issueOverlayInfo,
+                    showIssueOverlay: showIssueOverlay,
                     onSelectionChanged: { selection in
                         documentManager.setSelection(selection)
                     },
@@ -124,6 +128,12 @@ struct PDFWorkspaceView: View {
         }
         .onChange(of: documentManager.issueUnderlineLocations) { _, newValue in
             issueUnderlines = newValue
+        }
+        .onChange(of: documentManager.issueOverlayInfo) { _, newValue in
+            issueOverlayInfo = newValue
+        }
+        .onChange(of: documentManager.showIssueOverlay) { _, newValue in
+            showIssueOverlay = newValue
         }
         .onReceive(NotificationCenter.default.publisher(for: .openPDFRequested)) { _ in
             requestOpenPDF()

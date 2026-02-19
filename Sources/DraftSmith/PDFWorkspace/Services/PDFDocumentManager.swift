@@ -26,6 +26,13 @@ struct IssueLocation: Equatable {
     let bounds: CGRect
 }
 
+struct IssueOverlayInfo: Equatable {
+    let message: String
+    let category: String?
+    let selectionText: String
+    let suggestion: String?
+}
+
 @Observable
 @MainActor
 final class PDFDocumentManager {
@@ -43,6 +50,10 @@ final class PDFDocumentManager {
     // MARK: - Inline Issue Markers
     var showInlineMarkers: Bool = false
     var issueUnderlineLocations: [IssueLocation] = []
+
+    // MARK: - Issue Overlay
+    var showIssueOverlay: Bool = true
+    var issueOverlayInfo: IssueOverlayInfo?
 
     /// Tag key used to identify DraftSmith issue underline annotations
     nonisolated static let dsIssueUnderlineKey = "ds_issue_underline"

@@ -79,6 +79,7 @@ struct ContentView: View {
                 selectedIssue = nil
                 documentManager.issueOutlineBounds = nil
                 documentManager.issueOutlinePageIndex = nil
+                documentManager.issueOverlayInfo = nil
                 documentManager.selectedAnnotationID = nil
                 refreshIssues()
                 updateInlineMarkers()
@@ -88,6 +89,7 @@ struct ContentView: View {
                 if newValue == nil {
                     documentManager.issueOutlineBounds = nil
                     documentManager.issueOutlinePageIndex = nil
+                    documentManager.issueOverlayInfo = nil
                 }
             }
             .onChange(of: documentManager.currentSelection?.string) { _, _ in
@@ -287,6 +289,15 @@ struct ContentView: View {
                 }
 
                 Button {
+                    documentManager.showIssueOverlay.toggle()
+                } label: {
+                    Image(systemName: documentManager.showIssueOverlay ? "text.bubble.fill" : "text.bubble")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help(documentManager.showIssueOverlay ? "Hide issue overlay" : "Show issue overlay")
+
+                Button {
                     documentManager.showInlineMarkers.toggle()
                     updateInlineMarkers()
                 } label: {
@@ -405,6 +416,13 @@ struct ContentView: View {
                 documentManager.issueOutlinePageIndex = nil
             }
         }
+        // Set overlay info for the selected issue
+        documentManager.issueOverlayInfo = IssueOverlayInfo(
+            message: issue.message,
+            category: issue.category,
+            selectionText: issue.selectionText,
+            suggestion: issue.suggestionsList.first
+        )
         let t2 = CFAbsoluteTimeGetCurrent()
         print("[PERF] handleSelectIssue: navigate=\(ms(t1-t0))ms bounds=\(ms(t2-t1))ms cached=\(usedCache) text=\"\(issue.selectionText.prefix(30))\" TOTAL=\(ms(t2-t0))ms")
     }
@@ -722,6 +740,7 @@ struct ContentView: View {
             selectedIssue = nil
             documentManager.issueOutlineBounds = nil
             documentManager.issueOutlinePageIndex = nil
+            documentManager.issueOverlayInfo = nil
         }
         let t2 = CFAbsoluteTimeGetCurrent()
         print("[PERF] advanceToNextUnresolved: filter=\(ms(t1-t0))ms select=\(ms(t2-t1))ms unresolved=\(unresolvedIssues.count) TOTAL=\(ms(t2-t0))ms")

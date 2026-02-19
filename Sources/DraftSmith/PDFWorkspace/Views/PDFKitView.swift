@@ -14,6 +14,10 @@ struct PDFKitView: NSViewRepresentable {
     @Binding var selectedAnnotationID: UUID?
     @Binding var issueUnderlines: [IssueLocation]
 
+    /// Issue overlay info to display near the outline annotation.
+    var issueOverlayInfo: IssueOverlayInfo?
+    var showIssueOverlay: Bool
+
     /// Called when an issue underline annotation is clicked. Parameters: issueID, the PDFView (for popover positioning), view-relative rect.
     var onIssueAnnotationClicked: ((UUID, NSView, CGRect) -> Void)?
     /// Called when a comment highlight annotation is clicked. Parameter: annotation UUID.
@@ -27,6 +31,8 @@ struct PDFKitView: NSViewRepresentable {
         outlinePageIndex: Binding<Int?> = .constant(nil),
         selectedAnnotationID: Binding<UUID?> = .constant(nil),
         issueUnderlines: Binding<[IssueLocation]> = .constant([]),
+        issueOverlayInfo: IssueOverlayInfo? = nil,
+        showIssueOverlay: Bool = false,
         onSelectionChanged: ((PDFSelection?) -> Void)? = nil,
         onPageChanged: ((Int) -> Void)? = nil,
         onIssueAnnotationClicked: ((UUID, NSView, CGRect) -> Void)? = nil,
@@ -39,6 +45,8 @@ struct PDFKitView: NSViewRepresentable {
         self._outlinePageIndex = outlinePageIndex
         self._selectedAnnotationID = selectedAnnotationID
         self._issueUnderlines = issueUnderlines
+        self.issueOverlayInfo = issueOverlayInfo
+        self.showIssueOverlay = showIssueOverlay
         self.onSelectionChanged = onSelectionChanged
         self.onPageChanged = onPageChanged
         self.onIssueAnnotationClicked = onIssueAnnotationClicked
@@ -118,6 +126,15 @@ struct PDFKitView: NSViewRepresentable {
                 Self.scrollToCenterBounds(pdfView: pdfView, bounds: bounds, page: page)
             }
         }
+
+        // Update issue overlay
+        coordinator.updateIssueOverlay(
+            pdfView: pdfView,
+            info: showIssueOverlay ? issueOverlayInfo : nil,
+            outlineBounds: outlineBounds,
+            outlinePageIndex: outlinePageIndex,
+            document: document
+        )
 
         // Update selected annotation highlight
         let dsUUIDKey = PDFAnnotationKey(rawValue: AppConstants.dsUUIDAnnotationKey)
@@ -211,6 +228,9 @@ struct PDFKitView: NSViewRepresentable {
         var onIssueAnnotationClicked: ((UUID, NSView, CGRect) -> Void)?
         var onCommentAnnotationClicked: ((UUID) -> Void)?
 
+        // Issue overlay
+        var overlayHostingView: NSView?
+
         init(
             onSelectionChanged: ((PDFSelection?) -> Void)?,
             onPageChanged: ((Int) -> Void)?
@@ -275,6 +295,82 @@ struct PDFKitView: NSViewRepresentable {
             }
         }
 
+        func updateIssueOverlay(
+            pdfView: PDFView,
+            info: IssueOverlayInfo?,
+            outlineBounds: CGRect?,
+            outlinePageIndex: Int?,
+            document: PDFDocument?
+        ) {
+            // Remove existing overlay if info is nil or bounds are missing
+            guard let info = info,
+                  let bounds = outlineBounds,
+                  let pageIdx = outlinePageIndex,
+                  let page = document?.page(at: pageIdx) else {
+                overlayHostingView?.removeFromSuperview()
+                overlayHostingView = nil
+                return
+            }
+
+            // Convert outline bounds from page coordinates to PDFView coordinates
+            let viewRect = pdfView.convert(bounds, from: page)
+
+            // Build the overlay content
+            let overlayContent = IssueOverlayView(info: info)
+            let hostingView: NSHostingView<IssueOverlayView>
+
+            if let existing = overlayHostingView as? NSHostingView<IssueOverlayView> {
+                existing.rootView = overlayContent
+                hostingView = existing
+            } else {
+                overlayHostingView?.removeFromSuperview()
+                hostingView = NSHostingView(rootView: overlayContent)
+                overlayHostingView = hostingView
+                // Find the document view inside PDFView to add the overlay to
+                if let documentView = pdfView.documentView {
+                    documentView.addSubview(hostingView)
+                } else {
+                    pdfView.addSubview(hostingView)
+                }
+            }
+
+            // Size the overlay to fit its content, max 300pt wide
+            let fittingSize = hostingView.fittingSize
+            let overlayWidth = min(fittingSize.width, 300)
+            let overlayHeight = fittingSize.height
+
+            // Position: if using documentView, we need document-view coords, not pdfView coords
+            let positionRect: CGRect
+            if let documentView = pdfView.documentView, hostingView.superview === documentView {
+                positionRect = pdfView.convert(viewRect, to: documentView)
+            } else {
+                positionRect = viewRect
+            }
+
+            // Place below the outline by default; if not enough room, place above
+            let gap: CGFloat = 4
+            var originY = positionRect.minY - overlayHeight - gap  // below in flipped coords
+            if let superview = hostingView.superview {
+                // In flipped coordinate system (NSView), minY is top
+                // PDFView's documentView is flipped, so origin is top-left
+                if superview.isFlipped {
+                    originY = positionRect.maxY + gap
+                    if originY + overlayHeight > superview.bounds.height {
+                        originY = positionRect.minY - overlayHeight - gap
+                    }
+                } else {
+                    // Non-flipped: Y increases upward, so "below" means lower Y
+                    originY = positionRect.minY - overlayHeight - gap
+                    if originY < 0 {
+                        originY = positionRect.maxY + gap
+                    }
+                }
+            }
+
+            let originX = max(0, positionRect.midX - overlayWidth / 2)
+            hostingView.frame = CGRect(x: originX, y: originY, width: overlayWidth, height: overlayHeight)
+        }
+
         func updateUnderlines(_ locations: [IssueLocation], document: PDFDocument?) {
             guard let document = document else {
                 removeAllUnderlines()
@@ -325,6 +421,43 @@ struct PDFKitView: NSViewRepresentable {
 
         deinit {
             NotificationCenter.default.removeObserver(self)
+        }
+    }
+}
+
+// MARK: - Issue Overlay View
+
+struct IssueOverlayView: View {
+    let info: IssueOverlayInfo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let category = info.category {
+                Text(category)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+            }
+            Text(info.message)
+                .font(.caption)
+                .lineLimit(3)
+            if let suggestion = info.suggestion, !suggestion.isEmpty {
+                Text(suggestion)
+                    .font(.caption)
+                    .foregroundStyle(.blue)
+                    .lineLimit(2)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: 300, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(.ultraThinMaterial)
+                .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(Color.red.opacity(0.3), lineWidth: 0.5)
         }
     }
 }
