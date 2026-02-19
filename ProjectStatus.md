@@ -1,6 +1,6 @@
 # DraftSmith — Project Status
 
-**Last updated:** 2026-02-09
+**Last updated:** 2026-02-19
 
 ---
 
@@ -8,7 +8,7 @@
 
 DraftSmith is a macOS-only, offline-after-initial-setup PDF proofreading workspace for professional editors. It reads PDFs via PDFKit, runs grammar/style checking via a local LanguageTool server, transcribes voice notes via WhisperKit, and uses a local LLM (MLX Swift) for diplomatic comment generation, rewrites, and email drafting. It produces Acrobat-compatible PDF annotations (highlights + popup comments). No text ever leaves the machine.
 
-**Current state:** All 8 implementation phases are code-complete. The app builds successfully (`swift build`), and all 208 tests pass (4 skipped due to PDFKit synthetic PDF limitations). Real-world testing of the proofreading workflow has begun, and several rounds of UX refinements have been implemented based on that testing.
+**Current state:** All 8 implementation phases are code-complete. The app builds successfully (`swift build`), and all 211 tests pass (4 skipped due to PDFKit synthetic PDF limitations). Real-world testing of the proofreading workflow has begun, and several rounds of UX refinements have been implemented based on that testing. The repository is hosted at `github.com:aeobrien/DraftSmith.git`.
 
 ---
 
@@ -17,7 +17,7 @@ DraftSmith is a macOS-only, offline-after-initial-setup PDF proofreading workspa
 ```bash
 cd /Users/aidan/Dev/DraftSmith
 swift build 2>&1    # Build (passes)
-swift test 2>&1     # 208 tests pass, 4 skipped
+swift test 2>&1     # 211 tests pass, 4 skipped
 ```
 
 **Important:** If `.build` is cleaned, you must:
@@ -31,9 +31,9 @@ swift test 2>&1     # 208 tests pass, 4 skipped
 
 | Metric | Count |
 |--------|-------|
-| Source files | 108 |
+| Source files | 116 |
 | Test files | 24 |
-| Total tests | 208 (4 skipped) |
+| Total tests | 211 (4 skipped) |
 | Modules | 8 (PDFWorkspace, ServiceManager, CheckEngine, LocalStore, PromptManager, RewriteEngine, VoiceNotes, EmailStudio) |
 
 ---
@@ -212,22 +212,85 @@ After completing all 8 phases and beginning real-world testing with actual PDF p
 - **Problem:** Default "All" filter showed resolved/dismissed issues alongside new ones
 - **Fix:** Changed default filter to `.new` so only actionable issues show by default
 
+### Round 4: Performance Optimization (2026-02-19)
+
+#### 14. Dismiss/Resolve Speed — 1200ms → 4-16ms
+- **Problem:** Every dismiss took ~1200ms due to two full SwiftData fetches (133 issues, ~600ms each)
+- **Root cause:** `refreshIssues()` called `fetchIssues()`, then `updateProgressCounts()` called `issueCounts()` triggering a second fetch
+- **Fix:**
+  - `updateProgressCounts()` now computes from in-memory `issues` array
+  - Dismiss/resolve no longer call `refreshIssues()` — SwiftData mutates objects in-place
+  - `updateInlineMarkers()` removed from `refreshIssues()`, only called after check/toggle/doc-open
+  - Incremental `removeInlineMarker(for:)` instead of full recalculation
+  - `handleSelectIssue` reuses cached bounds from `issueUnderlineLocations`
+
+#### 15. LLM Rewrite Empty Responses
+- **Problem:** `polishComment` and `generateIssueComment` returned empty — model spent all tokens on `<think>` tags
+- **Fix:** Bumped `maxTokens` from 150/500 → 2000; added fallback chain: `polishComment` → `rewriteComment` (JSON-based)
+
+#### 16. V-Key Voice Recording Missing Suggestions
+- **Problem:** V-key shortcut created annotations but never requested background suggestions
+- **Fix:** Captured returned annotation and calls `requestBackgroundSuggestion` after creation
+
+### Round 5: PDF Highlight & Scroll Fixes (2026-02-19)
+
+#### 17. Red Box Appearing on Multiple Issues
+- **Problem:** Red outline box appeared on multiple issues simultaneously; pre-existing highlights persisted after document reload
+- **Root cause:** Old `.square` outline annotations were saved into the PDF without custom tags. `stripDraftSmithAnnotations` only looked for tagged annotations, missing untagged ones
+- **Fix:** Extended `stripDraftSmithAnnotations()` to also strip any `type=Square` annotation without a `dsUUID` tag (to avoid removing user-created Square annotations)
+
+#### 18. Issue Scroll Centering Broken
+- **Problem:** Scrolling to selected issues was inconsistent — first 7 worked, then subsequent issues went off-screen or were invisible
+- **Root causes:** (1) `document.findString(_:fromSelection:withOptions:)` returns FIRST global match, finding wrong page for common text like `" ."`, `"-"`, `")"`; (2) `pdfView.visibleRect` returns the entire document view area, not the visible viewport
+- **Fix:** Complete rewrite of scrolling:
+  - Scrolling now driven by outline bounds (already correctly resolved per-page) instead of `findString`
+  - Uses `PDFDestination(page:at:)` for reliable positioning
+  - Gets viewport height from scroll view's `clipView.bounds.height` (reliable) instead of `pdfView.visibleRect`
+  - Text selection highlight uses `findString(_:withOptions:)` (returns ALL matches) filtered to target page
+
+#### 19. Issue Underlines Rendered as Boxes
+- **Problem:** Original `.underline` annotations with full text bounds height rendered as visible red rectangles on ALL issues
+- **Fix:** Changed to `.highlight` type with 2px height at bottom of text bounds
+
+### Round 6: Issue Overlay & API Key Security (2026-02-19)
+
+#### 20. Toggleable Issue Overlay
+- **Problem:** When triaging issues quickly, users had to look at the bottom bar to understand each issue
+- **Fix:** Added floating overlay near the red outline box showing issue category, message, and suggestion. Positioned below the outline (or above if insufficient space). Toggle via status bar button (speech bubble icon). On by default.
+- **Implementation:** `IssueOverlayInfo` struct, `IssueOverlayView` SwiftUI view rendered via `NSHostingView` as a subview of `PDFView` at native Retina resolution
+
+#### 21. OpenAI API Key — Keychain Storage
+- **Problem:** API key was hardcoded in `AppConstants.swift`, blocked by GitHub secret scanning on push
+- **Fix:**
+  - Created `KeychainHelper` utility using macOS Security framework
+  - API key stored/retrieved from macOS Keychain (encrypted by OS)
+  - Settings → Services tab: `SecureField` to enter/remove key with save confirmation
+  - `AppConstants.openAIAPIKey` is now a computed property reading from Keychain
+  - Error message updated to direct users to Settings
+
 ---
 
 ## Files Modified in UX Refinement Sessions
 
 | File | Changes |
 |------|---------|
-| `CommentSidebarView.swift` | Removed `.lineLimit(3)` from comments and suggestions |
+| `CommentSidebarView.swift` | Removed `.lineLimit(3)` from comments and suggestions; debug logging in voice callback |
 | `IssueDetailView.swift` | Category instead of rule ID; three-button suggestions (Quick/Natural/Edit); `SuggestionOptionRow` |
 | `IssueQueueView.swift` | Default filter changed to `.new` |
 | `RewriteEngineProtocol.swift` | Added `generateIssueComment` method signature |
-| `RewriteEngine.swift` | Implemented `generateIssueComment` with style capsule, `stripThinkingTags()`, improved prompt |
-| `ContentView.swift` | Major refactor: extracted sheets/toolbar/panels; auto-advance; natural comment placeholder flow; `focusedSceneValue`; Save As via `NSSavePanel`; debug logging |
-| `PDFDocumentManager.swift` | `FocusedValueKey`; `Notification.Name.saveAsRequested`; autosave timer + deactivation observer; `createAnnotationForIssue` (selection-free annotation creation) |
+| `RewriteEngine.swift` | Implemented `generateIssueComment` with style capsule, `stripThinkingTags()`, improved prompt; maxTokens 2000; fallback chain |
+| `ContentView.swift` | Major refactor: extracted sheets/toolbar/panels; auto-advance; natural comment placeholder flow; `focusedSceneValue`; Save As via `NSSavePanel`; performance fixes (in-memory progress, incremental markers); V-key suggestion fix; issue overlay wiring; overlay toggle button |
+| `PDFDocumentManager.swift` | `FocusedValueKey`; `Notification.Name.saveAsRequested`; autosave timer + deactivation observer; `createAnnotationForIssue`; `stripDraftSmithAnnotations` extended for untagged Square annotations; `IssueOverlayInfo` struct; overlay state (`showIssueOverlay`, `issueOverlayInfo`) |
+| `PDFKitView.swift` | Complete scroll rewrite (PDFDestination-based centering); underlines changed to 2px highlight; issue overlay NSHostingView management; `IssueOverlayView` SwiftUI component |
+| `PDFWorkspaceView.swift` | Overlay info/toggle bindings; onChange handlers for overlay state |
 | `DraftSmithApp.swift` | Save/Save As menu commands via `CommandGroup(replacing: .saveItem)` |
 | `CheckEngine.swift` | Changed `clearNewIssues` to `clearAllIssues` to prevent duplicates |
 | `IssueManager.swift` | Added `clearAllIssues(for:)` method |
+| `AppConstants.swift` | `openAIAPIKey` now reads from Keychain via computed property |
+| `KeychainHelper.swift` | **New** — macOS Keychain utility (save/read/delete) |
+| `SettingsView.swift` | API key SecureField in Services tab |
+| `OpenAIChatClient.swift` | Updated empty-key check and error message |
+| `VoiceDictateButton.swift` | Debug logging |
 
 ---
 
@@ -290,7 +353,7 @@ DraftSmith/
 │   ├── DraftSmithApp.swift     # @main entry, SwiftData container, menu commands
 │   ├── ContentView.swift       # Root layout, wiring, sheet modifiers
 │   ├── SettingsView.swift      # Preferences window
-│   ├── Core/                   # Constants, directories, errors, shortcuts
+│   ├── Core/                   # Constants, directories, errors, shortcuts, KeychainHelper
 │   ├── PDFWorkspace/           # PDF viewing, annotations, comments, progress
 │   │   ├── Models/             #   DSAnnotation, AnnotationMetadata
 │   │   ├── Services/           #   PDFDocumentManager, PDFAnnotationService, etc.
@@ -341,9 +404,10 @@ DraftSmith/
 
 ### Immediate (Ready for Next Session)
 
-- [ ] **Remove debug logging** — `refreshIssues()` in `ContentView.swift` has `[DEBUG]` print statements that should be removed before release
-- [ ] **Verify natural comment replacement end-to-end** — The placeholder-then-update flow was implemented but needs real-world confirmation with the LLM running
-- [ ] **Test Save/Save As menus** — Implemented but not yet verified in manual testing
+- [ ] **Remove debug logging** — `[PERF]`, `[REWRITE]`, `[LLM]`, `[VOICE]`, `[DICTATE]`, `[SIDEBAR]`, `[COMMENT]`, `[CHECK]`, `[DEBUG]`, `[HIGHLIGHT-DEBUG]`, `[SCROLL-DEBUG]` print statements throughout the codebase
+- [ ] **`handleSelectIssue` called multiple times per dismiss** — SwiftUI re-rendering triggers redundant calls; investigate debouncing
+- [ ] **ForEach duplicate ID warning** — `DiffSegment` IDs can collide (e.g. `i:M`)
+- [ ] **LanguageTool HTTP errors** — Pages 4 and 9 failed with "HTTP error" in latest check run
 
 ### Short-Term (Polish for Usable Alpha)
 
@@ -383,3 +447,4 @@ DraftSmith/
 | `Critique4.md` | Fourth review — offline installer, token budget, double-check loop design, preference axes in JSON contracts |
 | `.claude/plans/quirky-sprouting-hamming.md` | Full implementation plan (all 8 phases with file lists and verification checklists) |
 | `.claude/plans/dazzling-bouncing-newt.md` | UX refinement plan (6 steps: truncation, category, comments, auto-advance, save, autosave) |
+| `.claude/plans/steady-zooming-boole.md` | Inline popovers + problem log plan |
