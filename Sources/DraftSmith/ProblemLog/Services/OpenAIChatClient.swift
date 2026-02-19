@@ -9,7 +9,7 @@ actor OpenAIChatClient {
         }
 
         let apiKey = AppConstants.openAIAPIKey
-        guard apiKey != "YOUR_API_KEY_HERE" else {
+        guard !apiKey.isEmpty else {
             throw OpenAIChatError.missingAPIKey
         }
 
@@ -63,7 +63,7 @@ enum OpenAIChatError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL: return "Invalid API URL."
-        case .missingAPIKey: return "OpenAI API key not configured. Set your key in AppConstants.swift."
+        case .missingAPIKey: return "OpenAI API key not configured. Set your key in Settings → Services."
         case .invalidResponse: return "Invalid response from API."
         case .apiError(let code, let msg): return "API error (\(code)): \(msg)"
         case .parseError: return "Failed to parse API response."

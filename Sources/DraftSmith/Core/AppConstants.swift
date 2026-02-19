@@ -45,7 +45,10 @@ enum AppConstants {
     static let audioChannels: Int = 1
 
     // MARK: - OpenAI (Problem Log Chat)
-    static let openAIAPIKey = ProcessInfo.processInfo.environment["DRAFTSMITH_OPENAI_API_KEY"] ?? ""
+    static let openAIAPIKeyKeychainKey = "openai_api_key"
+    static var openAIAPIKey: String {
+        KeychainHelper.read(key: openAIAPIKeyKeychainKey) ?? ""
+    }
     static let openAIModel = "gpt-5.2"
     static let openAIBaseURL = "https://api.openai.com/v1/chat/completions"
 

@@ -325,49 +325,41 @@ struct PDFKitView: NSViewRepresentable {
             } else {
                 overlayHostingView?.removeFromSuperview()
                 hostingView = NSHostingView(rootView: overlayContent)
+                hostingView.wantsLayer = true
                 overlayHostingView = hostingView
-                // Find the document view inside PDFView to add the overlay to
-                if let documentView = pdfView.documentView {
-                    documentView.addSubview(hostingView)
-                } else {
-                    pdfView.addSubview(hostingView)
-                }
+                // Add as subview of the PDFView itself (not documentView) so it stays
+                // in view coordinates and renders at native resolution
+                pdfView.addSubview(hostingView)
             }
 
-            // Size the overlay to fit its content, max 300pt wide
+            // Ensure crisp rendering at Retina scale
+            if let window = pdfView.window {
+                hostingView.layer?.contentsScale = window.backingScaleFactor
+            }
+
             let fittingSize = hostingView.fittingSize
-            let overlayWidth = min(fittingSize.width, 300)
+            let overlayWidth = fittingSize.width
             let overlayHeight = fittingSize.height
 
-            // Position: if using documentView, we need document-view coords, not pdfView coords
-            let positionRect: CGRect
-            if let documentView = pdfView.documentView, hostingView.superview === documentView {
-                positionRect = pdfView.convert(viewRect, to: documentView)
+            // viewRect is in pdfView coordinates (flipped: origin top-left)
+            // Place below the outline; if not enough room, place above
+            let gap: CGFloat = 6
+            var originY: CGFloat
+            if pdfView.isFlipped {
+                // Flipped: Y increases downward
+                originY = viewRect.maxY + gap
+                if originY + overlayHeight > pdfView.bounds.height {
+                    originY = viewRect.minY - overlayHeight - gap
+                }
             } else {
-                positionRect = viewRect
-            }
-
-            // Place below the outline by default; if not enough room, place above
-            let gap: CGFloat = 4
-            var originY = positionRect.minY - overlayHeight - gap  // below in flipped coords
-            if let superview = hostingView.superview {
-                // In flipped coordinate system (NSView), minY is top
-                // PDFView's documentView is flipped, so origin is top-left
-                if superview.isFlipped {
-                    originY = positionRect.maxY + gap
-                    if originY + overlayHeight > superview.bounds.height {
-                        originY = positionRect.minY - overlayHeight - gap
-                    }
-                } else {
-                    // Non-flipped: Y increases upward, so "below" means lower Y
-                    originY = positionRect.minY - overlayHeight - gap
-                    if originY < 0 {
-                        originY = positionRect.maxY + gap
-                    }
+                // Non-flipped: Y increases upward, "below" = lower Y
+                originY = viewRect.minY - overlayHeight - gap
+                if originY < 0 {
+                    originY = viewRect.maxY + gap
                 }
             }
 
-            let originX = max(0, positionRect.midX - overlayWidth / 2)
+            let originX = max(4, min(viewRect.midX - overlayWidth / 2, pdfView.bounds.width - overlayWidth - 4))
             hostingView.frame = CGRect(x: originX, y: originY, width: overlayWidth, height: overlayHeight)
         }
 
@@ -431,33 +423,38 @@ struct IssueOverlayView: View {
     let info: IssueOverlayInfo
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             if let category = info.category {
-                Text(category)
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
+                Text(category.uppercased())
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.red)
             }
             Text(info.message)
-                .font(.caption)
-                .lineLimit(3)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.primary)
+                .fixedSize(horizontal: false, vertical: true)
             if let suggestion = info.suggestion, !suggestion.isEmpty {
-                Text(suggestion)
-                    .font(.caption)
-                    .foregroundStyle(.blue)
-                    .lineLimit(2)
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 9))
+                    Text(suggestion)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(Color.accentColor)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(8)
-        .frame(maxWidth: 300, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(width: 280, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+            RoundedRectangle(cornerRadius: 5)
+                .fill(Color(.windowBackgroundColor))
+                .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(Color.red.opacity(0.3), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(Color.red.opacity(0.5), lineWidth: 1)
         }
     }
 }
