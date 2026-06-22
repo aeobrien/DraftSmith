@@ -1,17 +1,9 @@
 import Foundation
 
-enum DiffSegment: Identifiable, Sendable, Codable, Equatable {
+enum DiffSegment: Sendable, Codable, Equatable {
     case unchanged(String)
     case deleted(String)
     case inserted(String)
-
-    var id: String {
-        switch self {
-        case .unchanged(let text): return "u:\(text)"
-        case .deleted(let text): return "d:\(text)"
-        case .inserted(let text): return "i:\(text)"
-        }
-    }
 
     var text: String {
         switch self {

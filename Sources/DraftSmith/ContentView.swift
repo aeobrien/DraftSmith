@@ -13,6 +13,7 @@ struct ContentView: View {
     @Environment(EmailStudioService.self) private var emailStudioService
     @Environment(StyleMemoryManager.self) private var styleMemoryManager
     @Environment(ProjectProfileManager.self) private var profileManager
+    @Environment(UndoHistory.self) private var undoHistory
 
     @State private var selectedIssue: Issue?
     @State private var issues: [Issue] = []
@@ -38,6 +39,10 @@ struct ContentView: View {
     @State private var issuePopover: NSPopover?
     @State private var showOpenRecentUnsavedAlert = false
     @State private var pendingOpenURL: URL?
+    @State private var copilotExportAlert: String?
+    @State private var showCopilotExportAlert = false
+    @State private var copilotImportAlert: String?
+    @State private var showCopilotImportAlert = false
 
     private let commentPanelWidth: CGFloat = 260
 
@@ -59,6 +64,7 @@ struct ContentView: View {
                 issueEditorIssue: $issueEditorIssue,
                 documentManager: documentManager,
                 issueManager: issueManager,
+                undoHistory: undoHistory,
                 onRefreshAnnotations: { refreshAnnotations() },
                 onRefreshIssues: { refreshIssues() },
                 onAdvanceToNextUnresolved: { advanceToNextUnresolved() },
@@ -81,6 +87,7 @@ struct ContentView: View {
                 documentManager.issueOutlinePageIndex = nil
                 documentManager.issueOverlayInfo = nil
                 documentManager.selectedAnnotationID = nil
+                undoHistory.clear()
                 refreshIssues()
                 updateInlineMarkers()
                 refreshAnnotations()
@@ -136,6 +143,16 @@ struct ContentView: View {
                 }
             } message: {
                 Text("You have unsaved changes. Would you like to save before opening a new file?")
+            }
+            .alert("Copilot Export", isPresented: $showCopilotExportAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(copilotExportAlert ?? "")
+            }
+            .alert("Copilot Import", isPresented: $showCopilotImportAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(copilotImportAlert ?? "")
             }
     }
 
@@ -252,6 +269,71 @@ struct ContentView: View {
                 Label("Report Problem", systemImage: "exclamationmark.bubble")
             }
             .help("Report a problem with DraftSmith")
+
+            Divider()
+
+            Button {
+                performUndo()
+            } label: {
+                Label("Undo", systemImage: "arrow.uturn.backward")
+            }
+            .keyboardShortcut("z", modifiers: .command)
+            .disabled(!undoHistory.canUndo)
+            .help(undoHistory.undoDescription ?? "Undo")
+
+            Button {
+                performRedo()
+            } label: {
+                Label("Redo", systemImage: "arrow.uturn.forward")
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+            .disabled(!undoHistory.canRedo)
+            .help(undoHistory.redoDescription ?? "Redo")
+
+            Divider()
+
+            Button {
+                guard !annotations.isEmpty else {
+                    copilotExportAlert = "No comments to export."
+                    showCopilotExportAlert = true
+                    return
+                }
+                let json = CopilotExportService.exportJSON(
+                    annotations: annotations,
+                    issues: issues
+                )
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(json, forType: .string)
+                copilotExportAlert = "Copied \(annotations.count) comments to clipboard. Paste into Copilot for rewriting."
+                showCopilotExportAlert = true
+            } label: {
+                Label("Export for Rewrite", systemImage: "square.and.arrow.up")
+            }
+            .disabled(documentManager.document == nil)
+            .help("Export comments as JSON for Copilot rewriting")
+
+            Button {
+                guard let json = NSPasteboard.general.string(forType: .string) else {
+                    copilotImportAlert = "Clipboard is empty."
+                    showCopilotImportAlert = true
+                    return
+                }
+                let result = CopilotExportService.importJSON(
+                    json,
+                    annotations: annotations,
+                    documentManager: documentManager
+                )
+                if result.total == 0 {
+                    copilotImportAlert = "No valid rewrites found in clipboard. Check the JSON format."
+                } else {
+                    copilotImportAlert = "Imported \(result.matched) of \(result.total) rewrites as suggestions."
+                }
+                showCopilotImportAlert = true
+            } label: {
+                Label("Import Rewrites", systemImage: "square.and.arrow.down")
+            }
+            .disabled(documentManager.document == nil)
+            .help("Import Copilot-rewritten comments from clipboard")
         }
     }
 
@@ -337,12 +419,8 @@ struct ContentView: View {
                 showCommentEditor = true
             },
             onAddVoiceComment: { transcription in
-                print("[VOICE] onAddVoiceComment called, transcription: \"\(transcription.prefix(50))\", hasSelection: \(documentManager.currentSelection != nil)")
                 if let annotation = documentManager.createAnnotation(comment: transcription, source: .voiceNote) {
-                    print("[VOICE] Annotation created: \(annotation.id), requesting suggestion")
                     requestBackgroundSuggestion(for: annotation)
-                } else {
-                    print("[VOICE] createAnnotation returned nil (no selection?) — annotation won't get suggestion")
                 }
                 refreshAnnotations()
             },
@@ -369,6 +447,11 @@ struct ContentView: View {
                 editingAnnotation = annotation
             },
             onApplySuggestion: { annotation, suggestion in
+                undoHistory.recordSuggestionAccepted(
+                    annotationID: annotation.id,
+                    previousText: annotation.commentText,
+                    newText: suggestion
+                )
                 _ = documentManager.updateAnnotationText(
                     annotation: annotation,
                     newText: suggestion
@@ -377,6 +460,12 @@ struct ContentView: View {
                 refreshAnnotations()
             },
             onDismissSuggestion: { annotation in
+                if let dismissed = documentManager.rewriteSuggestions[annotation.id] {
+                    undoHistory.recordSuggestionIgnored(
+                        annotationID: annotation.id,
+                        dismissedText: dismissed
+                    )
+                }
                 documentManager.clearSuggestion(for: annotation.id)
             },
             onRequestRewrite: { annotation in
@@ -388,32 +477,66 @@ struct ContentView: View {
     // MARK: - Issue Callbacks
 
     private func handleSelectIssue(_ issue: Issue) {
-        let t0 = CFAbsoluteTimeGetCurrent()
+        // Guard against redundant calls from SwiftUI re-rendering
+        guard selectedIssue?.id != issue.id else { return }
+
         selectedIssue = issue
         documentManager.navigateToIssue(
             pageIndex: issue.pageIndex,
-            highlightText: issue.selectionText
+            highlightText: issue.selectionText,
+            highlightOffset: issue.textOffset
         )
-        let t1 = CFAbsoluteTimeGetCurrent()
         // Try to reuse cached bounds from inline markers (avoids expensive findString)
-        var usedCache = false
         if let cached = documentManager.issueUnderlineLocations.first(where: { $0.issueID == issue.id }) {
             documentManager.issueOutlineBounds = cached.bounds
             documentManager.issueOutlinePageIndex = cached.pageIndex
-            usedCache = true
         } else if let document = documentManager.document {
-            // Fallback: search for the text (only if no cached location)
-            if let selection = document.findString(issue.selectionText, withOptions: [])
-                .first(where: { sel in
-                    guard let page = sel.pages.first else { return false }
-                    return document.index(for: page) == issue.pageIndex
-                }) {
-                let bounds = selection.bounds(for: selection.pages.first!)
-                documentManager.issueOutlineBounds = bounds
-                documentManager.issueOutlinePageIndex = issue.pageIndex
-            } else {
-                documentManager.issueOutlineBounds = nil
-                documentManager.issueOutlinePageIndex = nil
+            // Try offset-based precise selection first (avoids "st" in "August" vs "1st" problem)
+            var found = false
+            if let offset = issue.textOffset,
+               let length = issue.textLength,
+               let page = document.page(at: issue.pageIndex),
+               let pageText = page.string {
+                // Find all occurrences of the flagged text on this page
+                let searchText = issue.selectionText
+                let nsPageText = pageText as NSString
+                var searchRange = NSRange(location: 0, length: nsPageText.length)
+                var occurrences: [(range: NSRange, distance: Int)] = []
+
+                while searchRange.location < nsPageText.length {
+                    let foundRange = nsPageText.range(of: searchText, options: .caseInsensitive, range: searchRange)
+                    if foundRange.location == NSNotFound { break }
+                    let distance = abs(foundRange.location - offset)
+                    occurrences.append((range: foundRange, distance: distance))
+                    searchRange.location = foundRange.location + 1
+                    searchRange.length = nsPageText.length - searchRange.location
+                }
+
+                // Pick the occurrence closest to the stored offset
+                if let closest = occurrences.min(by: { $0.distance < $1.distance }) {
+                    if let selection = page.selection(for: NSRange(location: closest.range.location, length: closest.range.length)) {
+                        let bounds = selection.bounds(for: page)
+                        documentManager.issueOutlineBounds = bounds
+                        documentManager.issueOutlinePageIndex = issue.pageIndex
+                        found = true
+                    }
+                }
+            }
+
+            if !found {
+                // Fallback: search for the text across the document
+                if let selection = document.findString(issue.selectionText, withOptions: [])
+                    .first(where: { sel in
+                        guard let page = sel.pages.first else { return false }
+                        return document.index(for: page) == issue.pageIndex
+                    }) {
+                    let bounds = selection.bounds(for: selection.pages.first!)
+                    documentManager.issueOutlineBounds = bounds
+                    documentManager.issueOutlinePageIndex = issue.pageIndex
+                } else {
+                    documentManager.issueOutlineBounds = nil
+                    documentManager.issueOutlinePageIndex = nil
+                }
             }
         }
         // Set overlay info for the selected issue
@@ -423,40 +546,32 @@ struct ContentView: View {
             selectionText: issue.selectionText,
             suggestion: issue.suggestionsList.first
         )
-        let t2 = CFAbsoluteTimeGetCurrent()
-        print("[PERF] handleSelectIssue: navigate=\(ms(t1-t0))ms bounds=\(ms(t2-t1))ms cached=\(usedCache) text=\"\(issue.selectionText.prefix(30))\" TOTAL=\(ms(t2-t0))ms")
     }
 
     private func handleResolveIssue(_ issue: Issue) {
-        let t0 = CFAbsoluteTimeGetCurrent()
+        undoHistory.recordIssueResolved(issueID: issue.id)
         issueManager.resolveIssue(issue)
         removeInlineMarker(for: issue.id)
         // Update in-memory — no DB re-fetch needed
         updateProgressCounts()
-        let t1 = CFAbsoluteTimeGetCurrent()
         advanceToNextUnresolved()
-        let t2 = CFAbsoluteTimeGetCurrent()
-        print("[PERF] handleResolveIssue: update=\(ms(t1-t0))ms advance=\(ms(t2-t1))ms TOTAL=\(ms(t2-t0))ms")
     }
 
     private func handleDismissIssue(_ issue: Issue) {
-        let t0 = CFAbsoluteTimeGetCurrent()
+        undoHistory.recordIssueDismissed(issueID: issue.id)
         issueManager.dismissIssue(issue)
         removeInlineMarker(for: issue.id)
         // Update in-memory — no DB re-fetch needed
         updateProgressCounts()
-        let t1 = CFAbsoluteTimeGetCurrent()
         advanceToNextUnresolved()
-        let t2 = CFAbsoluteTimeGetCurrent()
-        print("[PERF] handleDismissIssue: update=\(ms(t1-t0))ms advance=\(ms(t2-t1))ms TOTAL=\(ms(t2-t0))ms")
     }
 
-    private func ms(_ interval: CFAbsoluteTime) -> Int {
-        Int(interval * 1000)
-    }
 
     private func handleDismissAllMatchingText(_ issue: Issue) {
         let matchingIDs = Set(issues.filter { $0.selectionText == issue.selectionText && $0.issueStatus == .new }.map(\.id))
+        for id in matchingIDs {
+            undoHistory.recordIssueDismissed(issueID: id)
+        }
         issueManager.dismissAllMatching(
             selectionText: issue.selectionText,
             documentURL: documentManager.documentURL?.absoluteString
@@ -470,6 +585,9 @@ struct ContentView: View {
     private func handleDismissAllMatchingRule(_ issue: Issue) {
         guard let ruleID = issue.ruleID else { return }
         let matchingIDs = Set(issues.filter { $0.ruleID == ruleID && $0.issueStatus == .new }.map(\.id))
+        for id in matchingIDs {
+            undoHistory.recordIssueDismissed(issueID: id)
+        }
         issueManager.dismissAllByRule(
             ruleID: ruleID,
             documentURL: documentManager.documentURL?.absoluteString
@@ -489,6 +607,9 @@ struct ContentView: View {
             profile.customDictionary = dict
         }
         let matchingIDs = Set(issues.filter { $0.selectionText == word && $0.issueStatus == .new }.map(\.id))
+        for id in matchingIDs {
+            undoHistory.recordIssueDismissed(issueID: id)
+        }
         issueManager.dismissAllMatching(
             selectionText: word,
             documentURL: documentManager.documentURL?.absoluteString
@@ -500,15 +621,14 @@ struct ContentView: View {
     }
 
     private func handleAddAsComment(_ issue: Issue, _ text: String) {
-        if let annotation = documentManager.createAnnotationForIssue(
+        let annotation = documentManager.createAnnotationForIssue(
             comment: text,
             source: .languageTool,
             pageIndex: issue.pageIndex,
             selectionText: issue.selectionText
-        ) {
-            requestBackgroundSuggestion(for: annotation)
-        }
-        issueManager.resolveIssue(issue)
+        )
+        undoHistory.recordIssueResolved(issueID: issue.id)
+        issueManager.resolveIssue(issue, annotationUUID: annotation?.id)
         removeInlineMarker(for: issue.id)
         updateProgressCounts()
         refreshAnnotations()
@@ -516,8 +636,6 @@ struct ContentView: View {
     }
 
     private func handleAddNaturalComment(_ issue: Issue, _ suggestion: String) {
-        let tStart = CFAbsoluteTimeGetCurrent()
-        print("[PERF] handleAddNaturalComment: START")
         let placeholder = "Generating comment\u{2026}"
         guard let annotation = documentManager.createAnnotationForIssue(
             comment: placeholder,
@@ -525,30 +643,24 @@ struct ContentView: View {
             pageIndex: issue.pageIndex,
             selectionText: issue.selectionText
         ) else {
-            print("[DEBUG] createAnnotationForIssue returned nil — page=\(issue.pageIndex) text=\"\(issue.selectionText)\"")
             return
         }
         let annotationID = annotation.id
         let annotationPageIndex = annotation.pageIndex
         let annotationBounds = annotation.selectionBounds
         let annotationMetadata = annotation.metadata
-        issueManager.resolveIssue(issue)
+        undoHistory.recordIssueResolved(issueID: issue.id)
+        issueManager.resolveIssue(issue, annotationUUID: annotationID)
         removeInlineMarker(for: issue.id)
-        let t1 = CFAbsoluteTimeGetCurrent()
         updateProgressCounts()
-        let t2 = CFAbsoluteTimeGetCurrent()
         refreshAnnotations()
-        let t3 = CFAbsoluteTimeGetCurrent()
         advanceToNextUnresolved()
-        let t4 = CFAbsoluteTimeGetCurrent()
-        print("[PERF] handleAddNaturalComment sync: resolve=\(ms(t1-tStart))ms progress=\(ms(t2-t1))ms annotations=\(ms(t3-t2))ms advance=\(ms(t4-t3))ms TOTAL=\(ms(t4-tStart))ms")
         let category = issue.category ?? "Issue"
         let ruleID = issue.ruleID
         let flaggedText = issue.selectionText
         let message = issue.message
         let examples = profileManager.activeProfile?.commentExamples[issue.category ?? ""] ?? []
         Task {
-            let tTask = CFAbsoluteTimeGetCurrent()
             let comment = try? await rewriteEngine.generateIssueComment(
                 category: category,
                 ruleID: ruleID,
@@ -557,8 +669,6 @@ struct ContentView: View {
                 message: message,
                 exampleComments: examples
             )
-            let tLLM = CFAbsoluteTimeGetCurrent()
-            print("[PERF] handleAddNaturalComment LLM: generate=\(ms(tLLM-tTask))ms")
             let finalText = (comment?.isEmpty == false) ? comment! : "\(category): \(suggestion)"
             let stubAnnotation = DSAnnotation(
                 id: annotationID,
@@ -574,8 +684,6 @@ struct ContentView: View {
             // Don't call requestBackgroundSuggestion here — this comment was
             // already LLM-generated, no need to polish/rewrite it again.
             refreshAnnotations()
-            let tEnd = CFAbsoluteTimeGetCurrent()
-            print("[PERF] handleAddNaturalComment async TOTAL: \(ms(tEnd-tTask))ms")
         }
     }
 
@@ -616,7 +724,7 @@ struct ContentView: View {
             try quickRecorder.startRecording(annotationUUID: UUID())
             isQuickRecording = true
         } catch {
-            print("[DEBUG] Quick recording failed to start: \(error)")
+            // Recording failed to start — no user-facing action needed
         }
     }
 
@@ -656,63 +764,109 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Undo / Redo
+
+    private func performUndo() {
+        guard let action = undoHistory.popUndo() else { return }
+        applyUndoAction(action, isRedo: false)
+    }
+
+    private func performRedo() {
+        guard let action = undoHistory.popRedo() else { return }
+        applyUndoAction(action, isRedo: true)
+    }
+
+    private func applyUndoAction(_ action: UndoHistory.UndoAction, isRedo: Bool) {
+        switch action.type {
+        case .commentEdited, .suggestionAccepted:
+            // Find the annotation and revert/re-apply text
+            if let annotation = annotations.first(where: { $0.id == action.annotationID }) {
+                let targetText = isRedo ? action.newText : action.previousText
+                _ = documentManager.updateAnnotationText(
+                    annotation: annotation,
+                    newText: targetText
+                )
+                refreshAnnotations()
+            }
+
+        case .suggestionIgnored:
+            if isRedo {
+                // Re-dismiss the suggestion
+                documentManager.clearSuggestion(for: action.annotationID)
+            } else {
+                // Restore the dismissed suggestion
+                documentManager.rewriteSuggestions[action.annotationID] = action.previousText
+            }
+
+        case .issueResolved:
+            if isRedo {
+                // Re-resolve
+                if let issue = issues.first(where: { $0.id == action.annotationID }) {
+                    issueManager.resolveIssue(issue)
+                    removeInlineMarker(for: issue.id)
+                    updateProgressCounts()
+                }
+            } else {
+                // Un-resolve: set back to new
+                if let issue = issues.first(where: { $0.id == action.annotationID }) {
+                    issue.issueStatus = .new
+                    refreshIssues()
+                    updateInlineMarkers()
+                }
+            }
+
+        case .issueDismissed:
+            if isRedo {
+                // Re-dismiss
+                if let issue = issues.first(where: { $0.id == action.annotationID }) {
+                    issueManager.dismissIssue(issue)
+                    removeInlineMarker(for: issue.id)
+                    updateProgressCounts()
+                }
+            } else {
+                // Un-dismiss: set back to new
+                if let issue = issues.first(where: { $0.id == action.annotationID }) {
+                    issue.issueStatus = .new
+                    refreshIssues()
+                    updateInlineMarkers()
+                }
+            }
+        }
+    }
+
     // MARK: - Data
 
     private func refreshIssues() {
-        let t0 = CFAbsoluteTimeGetCurrent()
         guard let url = documentManager.documentURL?.absoluteString else {
             issues = []
             documentManager.issueUnderlineLocations = []
             return
         }
-        let fetched = issueManager.fetchIssues(for: url)
-        let t1 = CFAbsoluteTimeGetCurrent()
-        issues = fetched
-        let t2 = CFAbsoluteTimeGetCurrent()
+        issues = issueManager.fetchIssues(for: url)
         updateProgressCounts()
-        let t3 = CFAbsoluteTimeGetCurrent()
-        print("[PERF] refreshIssues: fetch=\(ms(t1-t0))ms setIssues=\(ms(t2-t1))ms progress=\(ms(t3-t2))ms count=\(fetched.count) TOTAL=\(ms(t3-t0))ms")
     }
 
     private func refreshAnnotations() {
-        let t0 = CFAbsoluteTimeGetCurrent()
         annotations = documentManager.allAnnotations()
-        let t1 = CFAbsoluteTimeGetCurrent()
-        print("[PERF] refreshAnnotations: \(ms(t1-t0))ms count=\(annotations.count)")
     }
 
     private func requestBackgroundSuggestion(for annotation: DSAnnotation) {
         let text = annotation.commentText
         let annotationID = annotation.id
         // Skip placeholder text
-        guard !text.isEmpty, !text.hasPrefix("Generating comment") else {
-            print("[REWRITE] Skipping — empty or placeholder text")
-            return
-        }
+        guard !text.isEmpty, !text.hasPrefix("Generating comment") else { return }
 
         // Check if LLM is ready before attempting — don't hang waiting
         let llmState = serviceManager.serviceState(for: .llm)
-        guard llmState.isReady else {
-            print("[REWRITE] Skipping — LLM not ready (\(llmState))")
-            return
-        }
+        guard llmState.isReady else { return }
 
-        print("[REWRITE] Requesting suggestion for \(annotationID), text: \"\(text.prefix(80))\"")
         Task {
             do {
-                let tRW0 = CFAbsoluteTimeGetCurrent()
                 let polished = try await rewriteEngine.polishComment(commentText: text)
-                let tRW1 = CFAbsoluteTimeGetCurrent()
-                print("[PERF] polishComment took \(ms(tRW1-tRW0))ms")
                 // Only suggest if meaningfully different from the original
-                guard polished.lowercased() != text.lowercased() else {
-                    print("[REWRITE] Suggestion identical to original, skipping")
-                    return
-                }
+                guard polished.lowercased() != text.lowercased() else { return }
                 documentManager.rewriteSuggestions[annotationID] = polished
-                print("[REWRITE] Set suggestion: \"\(polished.prefix(80))\"")
             } catch {
-                print("[REWRITE] polishComment failed, trying rewriteComment fallback: \(error)")
                 // Fallback: use rewriteComment (JSON-based) which may work for some inputs
                 do {
                     let variants = try await rewriteEngine.rewriteComment(
@@ -721,19 +875,16 @@ struct ContentView: View {
                     )
                     if let best = variants.first, best.text.lowercased() != text.lowercased() {
                         documentManager.rewriteSuggestions[annotationID] = best.text
-                        print("[REWRITE] Fallback succeeded: \"\(best.text.prefix(80))\"")
                     }
                 } catch {
-                    print("[REWRITE] Fallback also failed for \(annotationID): \(error)")
+                    // Suggestion generation failed — non-critical, silently continue
                 }
             }
         }
     }
 
     private func advanceToNextUnresolved() {
-        let t0 = CFAbsoluteTimeGetCurrent()
         let unresolvedIssues = issues.filter { $0.issueStatus == .new }
-        let t1 = CFAbsoluteTimeGetCurrent()
         if let first = unresolvedIssues.first {
             handleSelectIssue(first)
         } else {
@@ -742,8 +893,6 @@ struct ContentView: View {
             documentManager.issueOutlinePageIndex = nil
             documentManager.issueOverlayInfo = nil
         }
-        let t2 = CFAbsoluteTimeGetCurrent()
-        print("[PERF] advanceToNextUnresolved: filter=\(ms(t1-t0))ms select=\(ms(t2-t1))ms unresolved=\(unresolvedIssues.count) TOTAL=\(ms(t2-t0))ms")
     }
 
     private func openRecentDocument(url: URL) {
@@ -855,6 +1004,7 @@ private struct SheetModifiers: ViewModifier {
     @Binding var issueEditorIssue: Issue?
     let documentManager: PDFDocumentManager
     let issueManager: IssueManager
+    let undoHistory: UndoHistory
     let onRefreshAnnotations: () -> Void
     let onRefreshIssues: () -> Void
     let onAdvanceToNextUnresolved: () -> Void
@@ -888,12 +1038,8 @@ private struct SheetModifiers: ViewModifier {
                 CommentEditorView(
                     commentText: $newCommentText,
                     onSave: { text in
-                        print("[COMMENT] Manual comment save, hasSelection: \(documentManager.currentSelection != nil)")
                         if let annotation = documentManager.createAnnotation(comment: text, source: .manual) {
-                            print("[COMMENT] Annotation created: \(annotation.id), requesting suggestion")
                             onRequestBackgroundSuggestion(annotation)
-                        } else {
-                            print("[COMMENT] createAnnotation returned nil (no selection?)")
                         }
                         showCommentEditor = false
                         onRefreshAnnotations()
@@ -926,6 +1072,11 @@ private struct SheetModifiers: ViewModifier {
                 CommentEditorView(
                     commentText: $editCommentText,
                     onSave: { text in
+                        undoHistory.recordCommentEdit(
+                            annotationID: annotation.id,
+                            previousText: annotation.commentText,
+                            newText: text
+                        )
                         _ = documentManager.updateAnnotationText(
                             annotation: annotation,
                             newText: text
@@ -944,13 +1095,14 @@ private struct SheetModifiers: ViewModifier {
                     commentText: $issueEditorCommentText,
                     onSave: { text in
                         if let issue = issueEditorIssue {
-                            _ = documentManager.createAnnotationForIssue(
+                            let annotation = documentManager.createAnnotationForIssue(
                                 comment: text,
                                 source: .languageTool,
                                 pageIndex: issue.pageIndex,
                                 selectionText: issue.selectionText
                             )
-                            issueManager.resolveIssue(issue)
+                            undoHistory.recordIssueResolved(issueID: issue.id)
+                            issueManager.resolveIssue(issue, annotationUUID: annotation?.id)
                             onRefreshIssues()
                             onRefreshAnnotations()
                             onAdvanceToNextUnresolved()

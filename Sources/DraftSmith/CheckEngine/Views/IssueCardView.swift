@@ -48,6 +48,26 @@ struct IssueCardView: View {
                 .background(Color.yellow.opacity(0.15))
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
+            // Copilot-rewritten comment
+            if let rewritten = issue.rewrittenComment, !rewritten.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.caption2)
+                            .foregroundStyle(.purple)
+                        Text("Rewritten")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(rewritten)
+                        .font(.callout)
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.purple.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+            }
+
             // Suggestions with visual diff
             if !issue.suggestionsList.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {

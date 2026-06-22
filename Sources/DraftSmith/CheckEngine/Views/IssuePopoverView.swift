@@ -34,6 +34,39 @@ struct IssuePopoverView: View {
                 .background(Color.yellow.opacity(0.15))
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
+            // Comment actions (always visible when no suggestions)
+            if issue.suggestionsList.isEmpty {
+                HStack(spacing: 4) {
+                    Button {
+                        let category = issue.category ?? "Issue"
+                        onAddAsComment("\(category): \(issue.message)")
+                    } label: {
+                        Label("Quick (Q)", systemImage: "bolt")
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+
+                    Button {
+                        onAddNaturalComment(issue.message)
+                    } label: {
+                        Label("Natural (N)", systemImage: "sparkles")
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+
+                    Button {
+                        onEditComment(issue.message)
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+            }
+
             // Suggestions
             if !issue.suggestionsList.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {

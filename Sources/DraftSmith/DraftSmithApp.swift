@@ -23,6 +23,7 @@ struct DraftSmithApp: App {
     @State private var doubleCheckPipeline: DoubleCheckPipeline
     @State private var emailStudioService: EmailStudioService
     @State private var voiceNotePipeline: VoiceNotePipeline
+    @State private var undoHistory: UndoHistory
 
     @State private var showFirstLaunch = false
 
@@ -99,6 +100,7 @@ struct DraftSmithApp: App {
         _doubleCheckPipeline = State(initialValue: dcp)
         _emailStudioService = State(initialValue: ess)
         _voiceNotePipeline = State(initialValue: vnp)
+        _undoHistory = State(initialValue: UndoHistory())
     }
 
     var body: some Scene {
@@ -116,6 +118,7 @@ struct DraftSmithApp: App {
                 .environment(rewriteEngine)
                 .environment(emailStudioService)
                 .environment(voiceNotePipeline)
+                .environment(undoHistory)
                 .sheet(isPresented: $showFirstLaunch) {
                     ModelDownloadView {
                         showFirstLaunch = false

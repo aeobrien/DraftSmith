@@ -24,6 +24,35 @@ struct IssueDetailView: View {
                     StatusBadge(status: issue.issueStatus)
                 }
 
+                // Copilot-rewritten comment
+                if let rewritten = issue.rewrittenComment, !rewritten.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .font(.caption)
+                                .foregroundStyle(.purple)
+                            Text("Rewritten")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(rewritten)
+                            .font(.body)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.purple.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(rewritten, forType: .string)
+                        } label: {
+                            Label("Copy Rewrite", systemImage: "doc.on.doc")
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                    }
+                }
+
                 Divider()
 
                 // Flagged text
@@ -50,6 +79,36 @@ struct IssueDetailView: View {
                             .padding(.vertical, 2)
                             .background(Color.blue.opacity(0.1))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+
+                // Comment actions (always visible when no suggestions)
+                if issue.suggestionsList.isEmpty {
+                    HStack(spacing: 8) {
+                        Button {
+                            let category = issue.category ?? "Issue"
+                            onAddAsComment(issue, "\(category): \(issue.message)")
+                        } label: {
+                            Label("Quick", systemImage: "bolt")
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            onAddNaturalComment(issue, issue.message)
+                        } label: {
+                            Label("Natural", systemImage: "sparkles")
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            onEditComment(issue, issue.message)
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
                     }
                 }
 

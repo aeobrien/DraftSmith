@@ -3,7 +3,7 @@ import Foundation
 struct LanguageToolResponse: Codable, Sendable {
     let software: LanguageToolSoftware?
     let language: LanguageToolLanguageInfo?
-    let matches: [LanguageToolMatch]
+    var matches: [LanguageToolMatch]
 }
 
 struct LanguageToolSoftware: Codable, Sendable {
@@ -28,7 +28,7 @@ struct DetectedLanguage: Codable, Sendable {
 struct LanguageToolMatch: Codable, Sendable, Identifiable {
     let message: String
     let shortMessage: String?
-    let offset: Int
+    var offset: Int
     let length: Int
     let replacements: [LanguageToolReplacement]
     let rule: LanguageToolRule

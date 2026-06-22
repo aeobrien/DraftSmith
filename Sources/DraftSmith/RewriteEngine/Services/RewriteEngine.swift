@@ -221,11 +221,8 @@ final class RewriteEngine: RewriteEngineProtocol {
             maxTokens: 2000
         )
 
-        print("[LLM] generateIssueComment raw output (\(output.count) chars): \"\(output.prefix(200))\"")
-
         let result = Self.stripThinkingTags(from: output)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        print("[LLM] generateIssueComment after strip (\(result.count) chars): \"\(result.prefix(200))\"")
         return result
     }
 
@@ -263,8 +260,6 @@ final class RewriteEngine: RewriteEngineProtocol {
             systemPrompt: systemPrompt,
             maxTokens: 2000
         )
-
-        print("[REWRITE] Raw LLM output for polishComment: \"\(output.prefix(200))\"")
 
         let result = Self.stripThinkingTags(from: output)
             .trimmingCharacters(in: .whitespacesAndNewlines)

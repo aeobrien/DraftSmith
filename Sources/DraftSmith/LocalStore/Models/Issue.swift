@@ -17,6 +17,9 @@ final class Issue {
     var createdAt: Date
     var resolvedAt: Date?
     var documentURL: String?
+    var textOffset: Int?   // Character offset within the page's extracted text (for precise highlighting)
+    var textLength: Int?   // Length of the flagged text in characters
+    var rewrittenComment: String?  // Copilot-rewritten diplomatic version of the message
 
     init(
         id: UUID = UUID(),
@@ -30,7 +33,9 @@ final class Issue {
         suggestions: [String] = [],
         source: AnnotationSource = .languageTool,
         severity: IssueSeverity = .warning,
-        documentURL: String? = nil
+        documentURL: String? = nil,
+        textOffset: Int? = nil,
+        textLength: Int? = nil
     ) {
         self.id = id
         self.status = status.rawValue
@@ -45,6 +50,8 @@ final class Issue {
         self.severity = severity.rawValue
         self.createdAt = Date()
         self.documentURL = documentURL
+        self.textOffset = textOffset
+        self.textLength = textLength
     }
 
     // MARK: - Computed Properties

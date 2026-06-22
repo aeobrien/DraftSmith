@@ -71,11 +71,8 @@ struct VoiceDictateButton: View {
             do {
                 let result = try await serviceManager.transcriptionService.transcribe(audioURL: recording.url)
                 let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("[DICTATE] Transcription result: \"\(text.prefix(60))\" (empty: \(text.isEmpty))")
                 if !text.isEmpty {
-                    print("[DICTATE] Calling onTranscription callback")
                     onTranscription(text)
-                    print("[DICTATE] onTranscription callback returned")
                 }
             } catch {
                 // Transcription failed

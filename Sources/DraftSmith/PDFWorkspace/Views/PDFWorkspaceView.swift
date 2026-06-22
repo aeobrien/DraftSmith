@@ -7,6 +7,7 @@ struct PDFWorkspaceView: View {
     @State private var newCommentText = ""
     @State private var goToPageIndex: Int?
     @State private var highlightText: String?
+    @State private var highlightOffset: Int?
     @State private var outlineBounds: CGRect?
     @State private var outlinePageIndex: Int?
     @State private var selectedAnnotationID: UUID?
@@ -30,6 +31,7 @@ struct PDFWorkspaceView: View {
                     document: documentManager.document,
                     goToPageIndex: $goToPageIndex,
                     highlightText: $highlightText,
+                    highlightOffset: $highlightOffset,
                     outlineBounds: $outlineBounds,
                     outlinePageIndex: $outlinePageIndex,
                     selectedAnnotationID: $selectedAnnotationID,
@@ -114,7 +116,9 @@ struct PDFWorkspaceView: View {
         .onChange(of: documentManager.pendingHighlightText) { _, newValue in
             if let text = newValue {
                 highlightText = text
+                highlightOffset = documentManager.pendingHighlightOffset
                 documentManager.pendingHighlightText = nil
+                documentManager.pendingHighlightOffset = nil
             }
         }
         .onChange(of: documentManager.issueOutlineBounds) { _, newValue in

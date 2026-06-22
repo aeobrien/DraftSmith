@@ -43,6 +43,7 @@ final class PDFDocumentManager {
     private(set) var isModified: Bool = false
     var pendingNavigation: Int?
     var pendingHighlightText: String?
+    var pendingHighlightOffset: Int?  // Character offset for precise highlight targeting
     var issueOutlineBounds: CGRect?
     var issueOutlinePageIndex: Int?
     var selectedAnnotationID: UUID?
@@ -125,41 +126,8 @@ final class PDFDocumentManager {
         self.currentPageIndex = 0
         self.currentSelection = nil
         self.isModified = false
-        // Debug: dump all annotations on every page BEFORE stripping
-        print("[HIGHLIGHT-DEBUG] === Document opened: \(url.lastPathComponent) ===")
-        for pageIndex in 0..<doc.pageCount {
-            guard let page = doc.page(at: pageIndex) else { continue }
-            let anns = page.annotations
-            if !anns.isEmpty {
-                print("[HIGHLIGHT-DEBUG] Page \(pageIndex): \(anns.count) annotations")
-                for (i, ann) in anns.enumerated() {
-                    let type = ann.type ?? "nil"
-                    let color = ann.color
-                    let bounds = ann.bounds
-                    // Check all known DraftSmith keys
-                    let underlineTag = ann.value(forAnnotationKey: PDFAnnotationKey(rawValue: PDFDocumentManager.dsIssueUnderlineKey))
-                    let outlineTag = ann.value(forAnnotationKey: PDFAnnotationKey(rawValue: PDFDocumentManager.dsIssueOutlineKey))
-                    let dsUUID = ann.value(forAnnotationKey: PDFAnnotationKey(rawValue: AppConstants.dsUUIDAnnotationKey))
-                    print("[HIGHLIGHT-DEBUG]   [\(i)] type=\(type) color=\(color) bounds=\(bounds) underlineTag=\(underlineTag ?? "nil") outlineTag=\(outlineTag ?? "nil") dsUUID=\(dsUUID ?? "nil")")
-                }
-            }
-        }
         // Remove any DraftSmith annotations that were baked into the saved PDF
         stripStaleDraftSmithAnnotations()
-        // Debug: dump annotations AFTER stripping
-        print("[HIGHLIGHT-DEBUG] === After stripping stale annotations ===")
-        for pageIndex in 0..<doc.pageCount {
-            guard let page = doc.page(at: pageIndex) else { continue }
-            let anns = page.annotations
-            if !anns.isEmpty {
-                print("[HIGHLIGHT-DEBUG] Page \(pageIndex): \(anns.count) annotations remaining")
-                for (i, ann) in anns.enumerated() {
-                    let type = ann.type ?? "nil"
-                    let color = ann.color
-                    print("[HIGHLIGHT-DEBUG]   [\(i)] type=\(type) color=\(color) bounds=\(ann.bounds)")
-                }
-            }
-        }
     }
 
     func save() throws {
@@ -193,12 +161,13 @@ final class PDFDocumentManager {
         currentPageIndex = index
     }
 
-    func navigateToIssue(pageIndex: Int, highlightText: String?) {
+    func navigateToIssue(pageIndex: Int, highlightText: String?, highlightOffset: Int? = nil) {
         guard let document = document,
               pageIndex >= 0, pageIndex < document.pageCount else { return }
         currentPageIndex = pageIndex
         pendingNavigation = pageIndex
         pendingHighlightText = highlightText
+        pendingHighlightOffset = highlightOffset
     }
 
     func nextPage() {
@@ -338,6 +307,36 @@ final class PDFDocumentManager {
         var locations: [IssueLocation] = []
         for issue in issues where issue.issueStatus == .new {
             guard let page = document.page(at: issue.pageIndex) else { continue }
+
+            // Try offset-based precise selection first (picks correct "st" out of multiple on a page)
+            if let offset = issue.textOffset,
+               let pageText = page.string {
+                let nsPageText = pageText as NSString
+                let searchText = issue.selectionText
+                var searchRange = NSRange(location: 0, length: nsPageText.length)
+                var occurrences: [(range: NSRange, distance: Int)] = []
+
+                while searchRange.location < nsPageText.length {
+                    let foundRange = nsPageText.range(of: searchText, options: .caseInsensitive, range: searchRange)
+                    if foundRange.location == NSNotFound { break }
+                    occurrences.append((range: foundRange, distance: abs(foundRange.location - offset)))
+                    searchRange.location = foundRange.location + 1
+                    searchRange.length = nsPageText.length - searchRange.location
+                }
+
+                if let closest = occurrences.min(by: { $0.distance < $1.distance }),
+                   let selection = page.selection(for: closest.range) {
+                    let bounds = selection.bounds(for: page)
+                    locations.append(IssueLocation(
+                        issueID: issue.id,
+                        pageIndex: issue.pageIndex,
+                        bounds: bounds
+                    ))
+                    continue
+                }
+            }
+
+            // Fallback: findString (first match on page)
             if let selection = document.findString(issue.selectionText, withOptions: [])
                 .first(where: { sel in sel.pages.contains(page) }) {
                 let bounds = selection.bounds(for: page)

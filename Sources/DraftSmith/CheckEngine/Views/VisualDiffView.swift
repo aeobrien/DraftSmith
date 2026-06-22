@@ -5,7 +5,7 @@ struct VisualDiffView: View {
 
     var body: some View {
         FlowLayout(spacing: 0) {
-            ForEach(segments) { segment in
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 Text(segment.text)
                     .font(.body)
                     .foregroundStyle(foregroundColor(for: segment))

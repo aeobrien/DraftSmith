@@ -86,16 +86,14 @@ struct IssueBottomBarView: View {
         }
         .onKeyPress(characters: CharacterSet(charactersIn: "q")) { _ in
             guard let issue = selectedIssue else { return .ignored }
-            let suggestion = issue.suggestionsList.first
-            guard let suggestion else { return .ignored }
+            let suggestion = issue.suggestionsList.first ?? issue.message
             let category = issue.category ?? "Issue"
             onAddAsComment(issue, "\(category): \(suggestion)")
             return .handled
         }
         .onKeyPress(characters: CharacterSet(charactersIn: "n")) { _ in
             guard let issue = selectedIssue else { return .ignored }
-            let suggestion = issue.suggestionsList.first
-            guard let suggestion else { return .ignored }
+            let suggestion = issue.suggestionsList.first ?? issue.message
             onAddNaturalComment(issue, suggestion)
             return .handled
         }
@@ -247,6 +245,36 @@ struct IssueBottomBarView: View {
                         .font(.title3.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
 
+                    // Copilot-rewritten comment (if available)
+                    if let rewritten = issue.rewrittenComment, !rewritten.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "sparkles")
+                                    .font(.caption)
+                                    .foregroundStyle(.purple)
+                                Text("Rewritten")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(rewritten)
+                                .font(.body)
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.purple.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(rewritten, forType: .string)
+                            } label: {
+                                Label("Copy Rewrite", systemImage: "doc.on.doc")
+                            }
+                            .font(.caption2)
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                    }
+
                     // Flagged text in a prominent box
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Flagged text")
@@ -258,6 +286,39 @@ struct IssueBottomBarView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color.yellow.opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    // Comment actions (always visible)
+                    if issue.suggestionsList.isEmpty {
+                        HStack(spacing: 6) {
+                            Button {
+                                let category = issue.category ?? "Issue"
+                                onAddAsComment(issue, "\(category): \(issue.message)")
+                            } label: {
+                                Label("Quick (Q)", systemImage: "bolt")
+                            }
+                            .font(.caption2)
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+
+                            Button {
+                                onAddNaturalComment(issue, issue.message)
+                            } label: {
+                                Label("Natural (N)", systemImage: "sparkles")
+                            }
+                            .font(.caption2)
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+
+                            Button {
+                                onEditComment(issue, issue.message)
+                            } label: {
+                                Label("Edit (E)", systemImage: "pencil")
+                            }
+                            .font(.caption2)
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
                     }
 
                     // Suggestions
@@ -304,6 +365,17 @@ struct IssueBottomBarView: View {
                 .controlSize(.small)
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.none)
+
+                if let rewritten = issue.rewrittenComment, !rewritten.isEmpty {
+                    Button {
+                        onAddAsComment(issue, rewritten)
+                    } label: {
+                        Label("Use Rewrite", systemImage: "sparkles")
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    .tint(.purple)
+                }
 
                 Divider()
                     .frame(height: 16)

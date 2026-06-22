@@ -9,6 +9,7 @@ struct PDFKitView: NSViewRepresentable {
 
     @Binding var goToPageIndex: Int?
     @Binding var highlightText: String?
+    @Binding var highlightOffset: Int?
     @Binding var outlineBounds: CGRect?
     @Binding var outlinePageIndex: Int?
     @Binding var selectedAnnotationID: UUID?
@@ -27,6 +28,7 @@ struct PDFKitView: NSViewRepresentable {
         document: PDFDocument?,
         goToPageIndex: Binding<Int?> = .constant(nil),
         highlightText: Binding<String?> = .constant(nil),
+        highlightOffset: Binding<Int?> = .constant(nil),
         outlineBounds: Binding<CGRect?> = .constant(nil),
         outlinePageIndex: Binding<Int?> = .constant(nil),
         selectedAnnotationID: Binding<UUID?> = .constant(nil),
@@ -41,6 +43,7 @@ struct PDFKitView: NSViewRepresentable {
         self.document = document
         self._goToPageIndex = goToPageIndex
         self._highlightText = highlightText
+        self._highlightOffset = highlightOffset
         self._outlineBounds = outlineBounds
         self._outlinePageIndex = outlinePageIndex
         self._selectedAnnotationID = selectedAnnotationID
@@ -80,18 +83,41 @@ struct PDFKitView: NSViewRepresentable {
         // Set text selection highlight (visual only, no scrolling)
         if let text = highlightText, !text.isEmpty, let document = document {
             let targetPageIndex = goToPageIndex ?? outlinePageIndex ?? (pdfView.currentPage.flatMap { document.index(for: $0) })
+            let offset = highlightOffset
             DispatchQueue.main.async {
-                // Search ALL matches, find the one on the target page
-                if let pageIndex = targetPageIndex {
-                    let allMatches = document.findString(text, withOptions: .caseInsensitive)
-                    if let match = allMatches.first(where: { sel in
-                        guard let p = sel.pages.first else { return false }
-                        return document.index(for: p) == pageIndex
-                    }) {
-                        pdfView.setCurrentSelection(match, animate: true)
+                if let pageIndex = targetPageIndex,
+                   let page = document.page(at: pageIndex) {
+                    // Try offset-based precise selection first
+                    if let offset = offset, let pageText = page.string {
+                        let nsPageText = pageText as NSString
+                        var searchRange = NSRange(location: 0, length: nsPageText.length)
+                        var occurrences: [(range: NSRange, distance: Int)] = []
+
+                        while searchRange.location < nsPageText.length {
+                            let foundRange = nsPageText.range(of: text, options: .caseInsensitive, range: searchRange)
+                            if foundRange.location == NSNotFound { break }
+                            occurrences.append((range: foundRange, distance: abs(foundRange.location - offset)))
+                            searchRange.location = foundRange.location + 1
+                            searchRange.length = nsPageText.length - searchRange.location
+                        }
+
+                        if let closest = occurrences.min(by: { $0.distance < $1.distance }),
+                           let selection = page.selection(for: closest.range) {
+                            pdfView.setCurrentSelection(selection, animate: true)
+                        }
+                    } else {
+                        // Fallback: first match on page
+                        let allMatches = document.findString(text, withOptions: .caseInsensitive)
+                        if let match = allMatches.first(where: { sel in
+                            guard let p = sel.pages.first else { return false }
+                            return document.index(for: p) == pageIndex
+                        }) {
+                            pdfView.setCurrentSelection(match, animate: true)
+                        }
                     }
                 }
                 self.highlightText = nil
+                self.highlightOffset = nil
             }
         }
 
@@ -199,8 +225,6 @@ struct PDFKitView: NSViewRepresentable {
         let destY = bounds.midY + viewportHeightInPageCoords / 2.0
         let destination = PDFDestination(page: page, at: NSPoint(x: 0, y: destY))
         pdfView.go(to: destination)
-
-        print("[SCROLL-DEBUG] scrollToCenterBounds: page=\(pdfView.document?.index(for: page) ?? -1) bounds=\(bounds) scaleFactor=\(scaleFactor) viewportPx=\(viewportHeightInPoints) viewportPage=\(viewportHeightInPageCoords) destY=\(destY)")
     }
 
     func makeCoordinator() -> Coordinator {

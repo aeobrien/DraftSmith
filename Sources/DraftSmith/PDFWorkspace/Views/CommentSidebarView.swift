@@ -201,7 +201,6 @@ struct CommentSidebarView: View {
                 .disabled(!hasSelection)
 
                 VoiceDictateButton { transcription in
-                    print("[SIDEBAR] VoiceDictateButton callback, calling onAddVoiceComment")
                     onAddVoiceComment(transcription)
                 }
                 .help("Record a voice comment")

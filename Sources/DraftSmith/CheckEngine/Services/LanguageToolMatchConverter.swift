@@ -19,7 +19,8 @@ struct LanguageToolMatchConverter {
         match: LanguageToolMatch,
         selectionText: String,
         pageIndex: Int,
-        documentURL: String?
+        documentURL: String?,
+        textOffset: Int? = nil
     ) -> Issue? {
         // Extract the flagged word
         let nsText = selectionText as NSString
@@ -56,7 +57,9 @@ struct LanguageToolMatchConverter {
             suggestions: suggestions,
             source: .languageTool,
             severity: severity,
-            documentURL: documentURL
+            documentURL: documentURL,
+            textOffset: textOffset ?? match.offset,
+            textLength: match.length
         )
     }
 
