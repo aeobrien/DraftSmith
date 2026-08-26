@@ -1,0 +1,23 @@
+{
+  "capture_finished_at_utc": "2026-08-26T22:06:08Z",
+  "capture_started_at_utc": "2026-08-26T22:06:05Z",
+  "captured_at_utc": "2026-08-26T22:06:05Z",
+  "captured_byte_estimate": 726874,
+  "captured_path_count": 163,
+  "consistency_retry_count": 0,
+  "excluded": [],
+  "github_hard_limit_bytes": 100000000,
+  "guardian_version": "2.0-sidecar",
+  "head_state": "symbolic",
+  "host": "aidans-laptop",
+  "racy_capture": false,
+  "repository_id": "DraftSmith-e0dfe2f6fa27",
+  "schema_version": 1,
+  "snapshot_blob_threshold_bytes": 94371840,
+  "snapshot_consistency": "stable",
+  "source_branch": "main",
+  "source_head_oid": "bf35254f624a8d0832e9ae49554ec49ba8069beb",
+  "source_index_sha256": "ab288ffc4801aaa07cf37473191e0bf0b49841e456c9a8e76bda39d84b1b8e26",
+  "source_path": "/Users/aidan/Dev/DraftSmith",
+  "upstream_observed": "origin/main"
+}
