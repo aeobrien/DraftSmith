@@ -1,0 +1,328 @@
+project_shape:
+  scale: multi-subsystem
+  has_subsystem_layer: true
+  expected_modules: "12-18"
+  kind: product
+
+modules:
+  - id: draftsmith.pdf-workspace.document-review-workspace
+    project: DraftSmith
+    subsystem: PDF Workspace
+    name: Document review workspace
+    capability: Opens PDFs, tracks navigation and selection, saves edits, and coordinates the sidebar-driven review session.
+    status: mature
+    approach: Uses a @MainActor PDFDocumentManager over PDFKit documents plus SwiftUI/PDFKit bridge views, autosave, inline issue markers, and review-progress tracking.
+    tech: [SwiftUI, PDFKit, AppKit]
+    io: { in: "PDF files, user selections, issue-navigation events, annotation edits", out: "Rendered PDF state, saved PDFs with comments, current selection context, review progress counts" }
+    code_refs:
+      - Sources/DraftSmith/PDFWorkspace/Services/PDFDocumentManager.swift
+      - Sources/DraftSmith/PDFWorkspace/Services/ReviewProgressTracker.swift
+      - Sources/DraftSmith/PDFWorkspace/Views/PDFWorkspaceView.swift
+      - Sources/DraftSmith/PDFWorkspace/Views/PDFKitView.swift
+      - Sources/DraftSmith/PDFWorkspace/Views/CommentSidebarView.swift
+      - Sources/DraftSmith/PDFWorkspace/Views/ReviewProgressView.swift
+    known_gaps: []
+    match_keywords: [pdf viewer, pdf review workspace, annotation sidebar, pdf navigation, review progress]
+
+  - id: draftsmith.pdf-workspace.selection-text-extraction
+    project: DraftSmith
+    subsystem: PDF Workspace
+    name: Selection text extraction
+    capability: Extracts selected PDF text and scores whether it is reliable enough for downstream checking.
+    status: working
+    approach: Reads PDFSelection text and uses NaturalLanguage plus NSSpellChecker heuristics to classify extraction confidence and trigger Verify Text fallback.
+    tech: [PDFKit, NaturalLanguage, NSSpellChecker]
+    io: { in: "PDF selections", out: "Extracted text with high/low/unreadable confidence score" }
+    code_refs:
+      - Sources/DraftSmith/PDFWorkspace/Services/TextExtractionService.swift
+      - Sources/DraftSmith/CheckEngine/Views/VerifyTextView.swift
+    known_gaps:
+      - "Only heuristic confidence scoring and manual Verify Text correction exist; OCR fallback is still deferred."
+    match_keywords: [pdf text extraction, extraction confidence, verify text, noisy pdf handling]
+
+  - id: draftsmith.check-engine.document-grammar-scanning
+    project: DraftSmith
+    subsystem: Check Engine (LanguageTool)
+    name: Document grammar scanning
+    capability: Normalizes extracted text, chunks it for checking, submits it to LanguageTool, and maps findings back to PDF pages.
+    status: partial
+    approach: Uses PDFTextNormalizer, repeating-header stripping, cross-page chunking, LanguageTool HTTP checks, match conversion, and NSSpellChecker fallback while the full engine is unavailable.
+    tech: [PDFKit, LanguageTool, URLSession, NSSpellChecker]
+    io: { in: "Selected text or PDFDocument pages plus project LanguageTool config", out: "Issue records with page indices, flagged text, suggestions, and severity" }
+    code_refs:
+      - Sources/DraftSmith/CheckEngine/Services/CheckEngine.swift
+      - Sources/DraftSmith/CheckEngine/Services/PDFTextNormalizer.swift
+      - Sources/DraftSmith/CheckEngine/Services/LanguageToolMatchConverter.swift
+      - Sources/DraftSmith/ServiceManager/Services/LanguageToolClient.swift
+      - Sources/DraftSmith/ServiceManager/Services/NLFastPathService.swift
+    known_gaps:
+      - "ledger/PROJECT.md notes LanguageTool HTTP errors on some pages in real-world runs."
+      - "When LanguageTool is unavailable or errors, the engine falls back to the fast path and loses full rule coverage."
+    match_keywords: [grammar checking, languagetool, document chunking, page remapping, spelling fallback]
+
+  - id: draftsmith.check-engine.issue-lifecycle-registry
+    project: DraftSmith
+    subsystem: Check Engine (LanguageTool)
+    name: Issue lifecycle registry
+    capability: Persists, fetches, resolves, dismisses, and counts proofreading issues across a document review session.
+    status: mature
+    approach: Stores issues in SwiftData and updates status fields for resolve, dismiss, bulk-dismiss, and recheck cleanup flows.
+    tech: [SwiftData]
+    io: { in: "Generated issues and user issue actions", out: "Persisted issue rows, issue counts, resolved/dismissed state" }
+    code_refs:
+      - Sources/DraftSmith/CheckEngine/Services/IssueManager.swift
+      - Sources/DraftSmith/LocalStore/Models/Issue.swift
+      - Sources/DraftSmith/LocalStore/Models/IssueStatus.swift
+      - Sources/DraftSmith/LocalStore/Models/IssueSeverity.swift
+    known_gaps: []
+    match_keywords: [issue tracker, proofreading issue lifecycle, swiftdata issue store, resolve dismiss workflow]
+
+  - id: draftsmith.rewrite-engine.comment-and-rewrite-generation
+    project: DraftSmith
+    subsystem: Rewrite Engine (LLM)
+    name: Comment and rewrite generation
+    capability: Generates diplomatic comments, rewrite variants, issue comments, and polished rewrites from editorial context.
+    status: partial
+    approach: Assembles task-specific prompts from templates, examples, and style capsule data, then calls the local MLX LLM and parses JSON or plain-text responses.
+    tech: [MLXLLM, MLXLMCommon, SwiftData]
+    io: { in: "Passages, issue context, transcripts, preference axes, prompt templates, example pairs", out: "Comment variants, rewrite variants, plain-text issue comments, polished comment text" }
+    code_refs:
+      - Sources/DraftSmith/RewriteEngine/Services/RewriteEngine.swift
+      - Sources/DraftSmith/RewriteEngine/Services/LLMResponseParser.swift
+      - Sources/DraftSmith/RewriteEngine/Models/CommentVariant.swift
+      - Sources/DraftSmith/RewriteEngine/Models/RewriteVariant.swift
+      - Sources/DraftSmith/RewriteEngine/Models/LLMResponseModels.swift
+    known_gaps:
+      - "ledger/PROJECT.md notes that generateIssueComment currently skips the double-check loop."
+      - "ledger/PROJECT.md notes that the preference axes are not wired into all issue-comment generation flows."
+    match_keywords: [local llm rewriting, editorial comment generation, rewrite variants, structured llm output]
+
+  - id: draftsmith.rewrite-engine.output-double-check
+    project: DraftSmith
+    subsystem: Rewrite Engine (LLM)
+    name: Output double-check
+    capability: Validates and autocorrects LLM-generated comments and email drafts before they are shown to the user.
+    status: working
+    approach: Runs generated text through LanguageTool in parallel task groups and applies correction or rejection heuristics based on result severity.
+    tech: [LanguageTool, URLSession, Swift concurrency]
+    io: { in: "Comment variants and email draft variants", out: "Corrected variants or retained originals when validation fails" }
+    code_refs:
+      - Sources/DraftSmith/RewriteEngine/Services/DoubleCheckPipeline.swift
+      - Sources/DraftSmith/RewriteEngine/Services/DoubleCheckService.swift
+      - Sources/DraftSmith/RewriteEngine/Models/DoubleCheckResult.swift
+      - Sources/DraftSmith/ServiceManager/Services/LanguageToolClient.swift
+    known_gaps:
+      - "When validation decides a variant should be regenerated, this pipeline returns nil for that variant and does not perform a replacement generation step itself."
+    match_keywords: [llm guardrail, post-generation validation, grammar correction, output checking]
+
+  - id: draftsmith.rewrite-engine.style-capsule-synthesis
+    project: DraftSmith
+    subsystem: Rewrite Engine (LLM)
+    name: Style capsule synthesis
+    capability: Distills example pairs and feedback history into a bounded style capsule for later prompt conditioning.
+    status: partial
+    approach: Pulls examples and feedback from SwiftData, assembles a capsule-generation prompt, runs the local LLM, parses JSON, and trims the result to a token cap.
+    tech: [MLXLLM, MLXLMCommon, SwiftData]
+    io: { in: "Example pairs and feedback events", out: "Pending StyleCapsule records with capsule text and key tendencies" }
+    code_refs:
+      - Sources/DraftSmith/RewriteEngine/Services/CapsuleGenerator.swift
+      - Sources/DraftSmith/LocalStore/Models/StyleCapsule.swift
+      - Sources/DraftSmith/RewriteEngine/Models/LLMResponseModels.swift
+    known_gaps:
+      - "No call site for CapsuleGenerator.generateCapsule() was found in the app flow."
+    match_keywords: [style capsule, style summarization, writing persona memory, capsule generation]
+
+  - id: draftsmith.voice-notes.voice-note-to-comment-pipeline
+    project: DraftSmith
+    subsystem: Voice Notes (WhisperKit)
+    name: Voice note to comment pipeline
+    capability: Records audio against an annotation, transcribes it, lets the user edit the transcript, and turns it into comment variants.
+    status: working
+    approach: Uses AVAudioRecorder for capture, WhisperKit for transcription, TranscriptStore for persistence, and RewriteEngine for final comment generation.
+    tech: [AVFoundation, WhisperKit, SwiftUI]
+    io: { in: "Microphone audio, annotation UUIDs, target passage text, preference axes", out: "Saved recordings, saved transcripts, editable transcript text, generated comment variants" }
+    code_refs:
+      - Sources/DraftSmith/VoiceNotes/Services/VoiceNotePipeline.swift
+      - Sources/DraftSmith/VoiceNotes/Services/AudioRecorder.swift
+      - Sources/DraftSmith/VoiceNotes/Services/TranscriptStore.swift
+      - Sources/DraftSmith/VoiceNotes/Views/VoiceNotePanelView.swift
+      - Sources/DraftSmith/VoiceNotes/Views/TranscriptEditorView.swift
+    known_gaps: []
+    match_keywords: [voice notes, speech to text, transcript editing, dictated editorial comments]
+
+  - id: draftsmith.email-studio.email-draft-generation
+    project: DraftSmith
+    subsystem: Email Studio
+    name: Email draft generation
+    capability: Generates styled email subject options and draft bodies from editorial intent and issue context, then exports them for paste into Outlook.
+    status: working
+    approach: Assembles an email-draft prompt, runs the local LLM, validates draft bodies through the double-check pipeline, and copies the selected result via NSPasteboard.
+    tech: [MLXLLM, MLXLMCommon, AppKit, SwiftUI]
+    io: { in: "Recipient context, goal, key facts, inserted issue context, preference axes", out: "Subject options, validated email draft variants, clipboard text" }
+    code_refs:
+      - Sources/DraftSmith/EmailStudio/Services/EmailStudioService.swift
+      - Sources/DraftSmith/EmailStudio/Services/ClipboardService.swift
+      - Sources/DraftSmith/EmailStudio/Models/EmailGenerationRequest.swift
+      - Sources/DraftSmith/EmailStudio/Views/EmailStudioView.swift
+      - Sources/DraftSmith/EmailStudio/Views/IssueContextPickerView.swift
+    known_gaps: []
+    match_keywords: [email drafting, editorial email assistant, issue context insertion, clipboard export]
+
+  - id: draftsmith.prompt-manager.template-and-budgeted-assembly
+    project: DraftSmith
+    subsystem: Prompt Manager
+    name: Template and budgeted assembly
+    capability: Seeds prompt templates, stores active prompt versions, and assembles bounded prompts for all LLM tasks.
+    status: mature
+    approach: Persists PromptTemplate records in SwiftData and uses PromptAssembler plus TokenCounter to substitute placeholders and trim examples, guide, and capsule sections to budget.
+    tech: [SwiftData]
+    io: { in: "Prompt tasks, placeholders, style guide text, style capsule text, examples, token budgets", out: "Assembled system/user prompts with token estimates and trim reports" }
+    code_refs:
+      - Sources/DraftSmith/PromptManager/Services/PromptManagerService.swift
+      - Sources/DraftSmith/PromptManager/Services/PromptAssembler.swift
+      - Sources/DraftSmith/PromptManager/Services/TokenCounter.swift
+      - Sources/DraftSmith/PromptManager/Resources/DefaultTemplates.swift
+      - Sources/DraftSmith/PromptManager/Models/PromptTemplate.swift
+    known_gaps: []
+    match_keywords: [prompt templates, prompt assembly, token budgeting, prompt versioning]
+
+  - id: draftsmith.local-store.project-profile-and-rule-config
+    project: DraftSmith
+    subsystem: Local Store (SwiftData)
+    name: Project profile and rule config
+    capability: Stores the active project profile, custom dictionary, terminology preferences, severity overrides, and per-project LanguageTool settings.
+    status: working
+    approach: Uses SwiftData models and ProjectProfileManager to create, activate, fetch, and persist per-project proofreading preferences.
+    tech: [SwiftData]
+    io: { in: "Profile edits, rule toggles, terminology entries, severity overrides, example comments", out: "Active ProjectProfile state and LanguageTool check configuration" }
+    code_refs:
+      - Sources/DraftSmith/LocalStore/Services/ProjectProfileManager.swift
+      - Sources/DraftSmith/LocalStore/Models/ProjectProfile.swift
+      - Sources/DraftSmith/LocalStore/Models/TerminologyEntry.swift
+      - Sources/DraftSmith/LocalStore/Views/ProjectProfileEditorView.swift
+    known_gaps: []
+    match_keywords: [project profile, proofreading preferences, custom dictionary, terminology management]
+
+  - id: draftsmith.local-store.style-memory-corpus
+    project: DraftSmith
+    subsystem: Local Store (SwiftData)
+    name: Style memory corpus
+    capability: Stores example pairs, feedback events, and approved or pending style capsules and selects prompt examples within a token budget.
+    status: partial
+    approach: Uses SwiftData persistence plus FeedbackAnalyzer and TokenCounter to capture edits, rank recent examples, and maintain active capsule state.
+    tech: [SwiftData]
+    io: { in: "Example pairs, edited final comments, capsule approval actions", out: "Stored feedback corpus, selected examples, active capsule text, feedback counts" }
+    code_refs:
+      - Sources/DraftSmith/RewriteEngine/Services/StyleMemoryManager.swift
+      - Sources/DraftSmith/RewriteEngine/Services/FeedbackAnalyzer.swift
+      - Sources/DraftSmith/LocalStore/Models/ExamplePair.swift
+      - Sources/DraftSmith/LocalStore/Models/FeedbackEvent.swift
+      - Sources/DraftSmith/LocalStore/Models/StyleCapsule.swift
+    known_gaps:
+      - "StyleMemoryManager.loadInitialState() exists but no call site was found, so persisted capsule state and feedback count may not be restored on launch."
+      - "ledger/PROJECT.md notes that there is no guided onboarding flow for adding initial style-memory examples."
+    match_keywords: [style memory, few-shot example store, feedback corpus, capsule approval]
+
+  - id: draftsmith.service-manager.service-orchestration
+    project: DraftSmith
+    subsystem: Service Manager
+    name: Service orchestration
+    capability: Coordinates startup, readiness, low-RAM mutual exclusion, health checks, shutdown, and status display for the local AI services.
+    status: mature
+    approach: Uses a main-actor ServiceManager to manage LanguageTool, MLX LLM, and Whisper actors, plus a status bar view and RAM-based policy selection.
+    tech: [SwiftUI, Foundation]
+    io: { in: "App lifecycle events, user feature requests, machine memory capabilities", out: "Per-service state, automatic start/stop behavior, status UI updates" }
+    code_refs:
+      - Sources/DraftSmith/ServiceManager/ServiceManager.swift
+      - Sources/DraftSmith/ServiceManager/Models/ServiceKind.swift
+      - Sources/DraftSmith/ServiceManager/Models/ServiceState.swift
+      - Sources/DraftSmith/ServiceManager/Models/SystemCapabilities.swift
+      - Sources/DraftSmith/ServiceManager/Views/ServiceStatusBarView.swift
+    known_gaps: []
+    match_keywords: [service manager, local ai orchestration, low ram mode, service health checks]
+
+  - id: draftsmith.service-manager.grammar-runtime
+    project: DraftSmith
+    subsystem: Service Manager
+    name: Grammar runtime
+    capability: Boots the local LanguageTool HTTP server, keeps it healthy, and executes en-GB checks against it.
+    status: partial
+    approach: Launches a Java process from a bundled or discovered JRE, polls localhost for readiness, and sends form-encoded requests through LanguageToolClient.
+    tech: [Java, LanguageTool, Process, URLSession]
+    io: { in: "Runtime assets, check requests, enabled and disabled rule sets", out: "LanguageTool server state and structured grammar-match responses" }
+    code_refs:
+      - Sources/DraftSmith/ServiceManager/Services/LanguageToolService.swift
+      - Sources/DraftSmith/ServiceManager/Services/LanguageToolClient.swift
+      - Sources/DraftSmith/ServiceManager/Services/LanguageToolModels.swift
+    known_gaps:
+      - "The runtime depends on a bundled or otherwise discoverable Java executable."
+      - "ledger/PROJECT.md and ProjectStatus.md both note real-world LanguageTool failure cases that are not fully eliminated."
+    match_keywords: [languagetool server, local grammar engine, java child process, localhost grammar api]
+
+  - id: draftsmith.service-manager.local-llm-runtime
+    project: DraftSmith
+    subsystem: Service Manager
+    name: Local LLM runtime
+    capability: Loads the recommended on-device model and serves prompt-based generation calls for rewrite and email tasks.
+    status: working
+    approach: Uses MLX Swift LM containers selected from SystemCapabilities and performs chat-style generation with temperature and top-p sampling.
+    tech: [MLXLLM, MLXLMCommon]
+    io: { in: "System and user prompts plus max-token budget", out: "Generated model text from the selected local Qwen3 configuration" }
+    code_refs:
+      - Sources/DraftSmith/ServiceManager/Services/LLMService.swift
+      - Sources/DraftSmith/ServiceManager/Models/SystemCapabilities.swift
+    known_gaps:
+      - "ledger/PROJECT.md build notes require a manual mlx-swift-lm patch after a clean rebuild."
+    match_keywords: [local llm runtime, mlx swift lm, apple silicon inference, on-device text generation]
+
+  - id: draftsmith.service-manager.transcription-runtime
+    project: DraftSmith
+    subsystem: Service Manager
+    name: Transcription runtime
+    capability: Loads the Whisper model and converts recorded audio into timestamped English transcript segments.
+    status: working
+    approach: Instantiates WhisperKit on demand and flattens its transcription results into app-specific TranscriptionResult values.
+    tech: [WhisperKit]
+    io: { in: "Recorded audio file URLs", out: "Transcribed text, timed segments, detected language, duration" }
+    code_refs:
+      - Sources/DraftSmith/ServiceManager/Services/TranscriptionService.swift
+      - Sources/DraftSmith/VoiceNotes/Models/TranscriptionResult.swift
+    known_gaps: []
+    match_keywords: [whisper runtime, speech transcription, local speech to text, timed transcript segments]
+
+  - id: draftsmith.service-manager.first-launch-runtime-bootstrap
+    project: DraftSmith
+    subsystem: Service Manager
+    name: First-launch runtime bootstrap
+    capability: Downloads and installs the LLM model, Java runtime, LanguageTool assets, and Whisper model needed for offline use.
+    status: working
+    approach: Runs a staged first-launch downloader with URLSession plus system tar and ditto extraction, then marks Runtime/.setup_complete when all assets are present.
+    tech: [URLSession, Process, MLXLLM, WhisperKit, tar, ditto]
+    io: { in: "Model recommendation and network access on first launch", out: "Installed runtime assets, progress updates, setup-complete marker file" }
+    code_refs:
+      - Sources/DraftSmith/ServiceManager/Services/ModelDownloadManager.swift
+      - Sources/DraftSmith/ServiceManager/Views/ModelDownloadView.swift
+      - Sources/DraftSmith/Core/AppDirectories.swift
+    known_gaps:
+      - "The core product is only offline after this network-dependent bootstrap completes."
+      - "ledger/PROJECT.md notes the bundled JRE footprint as an unresolved weight concern."
+    match_keywords: [first launch setup, runtime downloader, model installer, bundled jre bootstrap]
+
+  - id: draftsmith.problem-log.support-report-assistant
+    project: DraftSmith
+    subsystem: Problem Log
+    name: Support report assistant
+    capability: Guides the user through describing a product problem, can accept a spoken report, and exports a markdown issue summary.
+    status: partial
+    approach: Uses a SwiftUI chat interface backed by the OpenAI Chat Completions API, with optional local audio transcription before sending the text conversation upstream.
+    tech: [SwiftUI, URLSession, OpenAI Chat Completions API, WhisperKit, AVFoundation]
+    io: { in: "Typed or spoken bug descriptions plus follow-up answers", out: "Assistant clarifications, generated markdown problem reports, exported text files" }
+    code_refs:
+      - Sources/DraftSmith/ProblemLog/Views/ProblemLogView.swift
+      - Sources/DraftSmith/ProblemLog/Services/OpenAIChatClient.swift
+      - Sources/DraftSmith/ProblemLog/Models/ProblemLogMessage.swift
+      - Sources/DraftSmith/ProblemLog/Resources/AppGuide.swift
+    known_gaps:
+      - "This feature depends on a remote OpenAI API key and network access, unlike the offline core product."
+      - "Problem Log is wired into ContentView but is not listed in ledger/PROJECT.md's subsystem table."
+    match_keywords: [bug report assistant, support chat, issue report generator, voice bug report]
