@@ -1,0 +1,17 @@
+
+
+The "98% aligned" assessment is fair. 
+
+Here's what I'd focus on for the remaining ~2%:
+
+The "offline" vs. "downloads on first launch" tension is acknowledged but not resolved. Both documents now mention downloading models on first launch (whisper ~75MB, LLM ~4.5GB). The Vision says "fully offline" in its opening sentence and "no text leaves the machine" as a non-negotiable. Downloading a model isn't sending text out, so it's not a security violation — but it is a deployment one for users on restricted corporate networks. I'd suggest the Vision explicitly say "offline after initial setup" or the spec include an offline installer option (USB/download-separately workflow). Small thing, but "fully offline" is a claim someone will test on day one.
+
+The Style Capsule's 500-token budget is stated but not tested against prompt assembly. Section 12.2 lists everything that goes into a prompt: template, style guide, capsule (500 tokens), few-shot examples ("10–50 representative examples"), preference axes, and the en-GB directive. If a user has 30 example pairs and each is even 100 tokens, that's 3,000 tokens of examples alone before you add the passage, transcript, and template. On an 8B model with an 8K context window, you could be at capacity before the actual task input arrives. The spec should include a token budget table, even a rough one, showing how these components are allocated and what gets trimmed first when they compete.
+
+The double-check loop auto-correction behaviour needs a design decision. Section 6.3 says "the app auto-corrects using LanguageTool's suggestions silently." That's fine for clear-cut US→UK spelling swaps. But LanguageTool also flags stylistic issues, ambiguous grammar, and things where its suggestion might change meaning. Auto-applying all LanguageTool suggestions to LLM output without review could introduce errors. Consider: auto-apply only spelling corrections; flag style/grammar issues for the user (or discard the variant and regenerate).
+
+One minor structural gap: the JSON contracts (Section 11) don't reflect the four preference axes in any way. The LLM is prompted with four axis values but the output schema has no field indicating where on those axes each variant falls. The label field does this informally ("gentle", "direct") but only on one axis. If a user has set Brief+Formal+Direct, variants should be labelled in a way that reflects the multi-dimensional intent, or the UI won't communicate why the variants differ from each other.
+
+Beyond those points, the documents are genuinely well-matched. The challenge-network part of me wants to push on one more thing, though:
+
+Have you stress-tested the "comment-only" constraint against actual editorial practice? It's a clean architectural boundary, but some editorial feedback is inherently structural — "move this paragraph before the introduction," "this section should be cut entirely," "swap the order of points 2 and 3." These don't map well to highlight-and-comment. They're more like margin notes with arrows. Is that something the comment text handles adequately ("Consider moving this paragraph to precede the introduction"), or would a future version need a different annotation type? Worth a line in the Vision's scope boundaries acknowledging this category even if you defer it.
